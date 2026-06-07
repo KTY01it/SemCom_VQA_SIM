@@ -1,0 +1,65 @@
+# Python cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+conda_env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+logs/
+
+# Generated results
+results/
+outputs/
+experiments/outputs/
+runs/
+wandb/
+mlruns/
+
+# Checkpoints / model weights
+checkpoints/
+weights/
+models/
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.safetensors
+
+# Data / datasets
+data/
+datasets/
+GQA/
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.rar
+
+# Large numerical artifacts
+*.npy
+*.npz
+*.pkl
+*.pickle
+*.h5
+*.hdf5
+*.mat

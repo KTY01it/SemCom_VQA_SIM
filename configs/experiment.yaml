@@ -1,0 +1,40 @@
+project:
+  name: semcom_vqa_sim
+  seed: 0
+
+data:
+  root: /home/cislab301b/Dung/Data/GQA/subsets/gqa_comm_v2
+  samples_file: samples.jsonl
+  bbox_file: bbox_packets.jsonl
+  sg_file: sg_triplets.jsonl
+  object_vocab_file: object_vocab.json
+  relation_vocab_file: relation_vocab.json
+  answer_vocab_file: answer_vocab.json
+
+source:
+  mode: random_bits        # random_bits | sg_packet | bbox_packet
+  num_bits: 4096
+  packet_size_bits: 512
+
+modulation:
+  scheme: bpsk
+  bit0_symbol: -1.0
+  bit1_symbol: 1.0
+
+channel:
+  type: awgn               # awgn | rayleigh
+  snr_db_list: [-4, -2, 0, 2, 4, 6, 8, 10, 12, 14, 16]
+  perfect_csi: true
+
+latency:
+  bandwidth_hz: 100000
+  use_shannon_like_rate: true
+
+ldpc:
+  enabled: false
+  code_rate: 0.5
+  block_length: 1024
+  max_iter: 50
+
+output:
+  dir: results
