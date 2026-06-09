@@ -1,4 +1,5 @@
 import csv
+import json
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -25,6 +26,11 @@ from src.semantic.packet_codec import (
     encode_bboxes,
     encode_sg_triplets,
 )
+from src.semantic.packet_validation import (
+    summarize_validation_results,
+    validate_bbox_packet,
+    validate_sg_packet,
+)
 from src.semantic.ranking import (
     build_object_frequency,
     build_relation_frequency,
@@ -36,6 +42,60 @@ from src.semantic.ranking import (
     rank_triplets_original,
 )
 from src.utils.config import load_yaml
+
+
+def load_json(path: Path):
+    with path.open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def get_vocab_sizes(cfg, data_root: Path) -> tuple[int, int]:
+    object_vocab_name = cfg["data"].get("object_vocab", "object_vocab.json")
+    relation_vocab_name = cfg["data"].get("relation_vocab", "relation_vocab.json")
+
+    object_vocab = load_json(data_root / object_vocab_name)
+    relation_vocab = load_json(data_root / relation_vocab_name)
+
+    return len(object_vocab), len(relation_vocab)
+
+
+def filter_valid_aligned(selected_units, tx_packets, rx_packets, validation_results):
+    selected_valid = []
+    tx_valid = []
+    rx_valid = []
+
+    for unit, tx_pkt, rx_pkt, status in zip(
+        selected_units,
+        tx_packets,
+        rx_packets,
+        validation_results,
+    ):
+        if status.valid:
+            selected_valid.append(unit)
+            tx_valid.append(tx_pkt)
+            rx_valid.append(rx_pkt)
+
+    return selected_valid, tx_valid, rx_valid
+
+
+def mean_or_zero(values):
+    return sum(values) / len(values) if values else 0.0
+
+
+def write_csv_union_fieldnames(output_path: Path, rows: list[dict]) -> None:
+    fieldnames = []
+    seen = set()
+
+    for row in rows:
+        for key in row.keys():
+            if key not in seen:
+                seen.add(key)
+                fieldnames.append(key)
+
+    with output_path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(rows)
 
 
 def select_bboxes(
@@ -116,11 +176,16 @@ def run_sg(
     perfect_csi,
     bandwidth_hz,
     codec,
+    object_vocab_size,
+    relation_vocab_size,
 ):
     before_strict_list = []
     after_strict_list = []
+    after_strict_validated_list = []
+
     before_loose_list = []
     after_loose_list = []
+    after_loose_validated_list = []
 
     source_bits_list = []
     coded_bits_list = []
@@ -130,6 +195,8 @@ def run_sg(
     ldpc_success_list = []
     source_latency_list = []
     coded_latency_list = []
+
+    validation_results_all = []
 
     used_samples = 0
 
@@ -175,7 +242,27 @@ def run_sg(
             codec=codec,
         )
 
-        rx_packets = decode_sg_triplets(rx_bits, num_triplets=len(tx_packets))
+        rx_packets = decode_sg_triplets(
+            rx_bits,
+            num_triplets=len(tx_packets),
+        )
+
+        validation_results = [
+            validate_sg_packet(
+                pkt,
+                object_vocab_size=object_vocab_size,
+                relation_vocab_size=relation_vocab_size,
+            )
+            for pkt in rx_packets
+        ]
+        validation_results_all.extend(validation_results)
+
+        selected_valid, tx_packets_valid, rx_packets_valid = filter_valid_aligned(
+            selected_units=selected,
+            tx_packets=tx_packets,
+            rx_packets=rx_packets,
+            validation_results=validation_results,
+        )
 
         delivered = delivered_triplets_by_exact_recovery(
             selected_triplets=selected,
@@ -183,10 +270,23 @@ def run_sg(
             rx_packets=rx_packets,
         )
 
+        delivered_validated = delivered_triplets_by_exact_recovery(
+            selected_triplets=selected_valid,
+            tx_packets=tx_packets_valid,
+            rx_packets=rx_packets_valid,
+        )
+
         before_strict_list.append(sg_answerability_strict(selected, answer, keywords))
         after_strict_list.append(sg_answerability_strict(delivered, answer, keywords))
+        after_strict_validated_list.append(
+            sg_answerability_strict(delivered_validated, answer, keywords)
+        )
+
         before_loose_list.append(sg_answerability_loose(selected, answer))
         after_loose_list.append(sg_answerability_loose(delivered, answer))
+        after_loose_validated_list.append(
+            sg_answerability_loose(delivered_validated, answer)
+        )
 
         source_bits = int(stats["source_bits"])
         coded_bits = int(stats["coded_bits"])
@@ -208,7 +308,9 @@ def run_sg(
 
         used_samples += 1
 
-    return {
+    validation_summary = summarize_validation_results(validation_results_all)
+
+    out = {
         "semantic_type": "sg",
         "ranking_method": method,
         "coding_mode": coding_mode,
@@ -216,24 +318,27 @@ def run_sg(
         "snr_db": snr_db,
         "n_top": n_top,
         "num_samples": used_samples,
-        "avg_source_bits": sum(source_bits_list) / len(source_bits_list),
-        "avg_coded_bits": sum(coded_bits_list) / len(coded_bits_list),
-        "avg_code_rate": (
-            sum(source_bits_list) / len(source_bits_list)
-        ) / (
-            sum(coded_bits_list) / len(coded_bits_list)
+        "avg_source_bits": mean_or_zero(source_bits_list),
+        "avg_coded_bits": mean_or_zero(coded_bits_list),
+        "avg_code_rate": mean_or_zero(source_bits_list) / mean_or_zero(coded_bits_list),
+        "channel_ber": mean_or_zero(channel_ber_list),
+        "decoded_ber": mean_or_zero(decoded_ber_list),
+        "packet_error_rate": mean_or_zero(per_list),
+        "ldpc_block_success_rate": mean_or_zero(ldpc_success_list),
+        "answerability_before_strict": mean_or_zero(before_strict_list),
+        "answerability_after_strict": mean_or_zero(after_strict_list),
+        "answerability_after_strict_validated": mean_or_zero(
+            after_strict_validated_list
         ),
-        "channel_ber": sum(channel_ber_list) / len(channel_ber_list),
-        "decoded_ber": sum(decoded_ber_list) / len(decoded_ber_list),
-        "packet_error_rate": sum(per_list) / len(per_list),
-        "ldpc_block_success_rate": sum(ldpc_success_list) / len(ldpc_success_list),
-        "answerability_before_strict": sum(before_strict_list) / len(before_strict_list),
-        "answerability_after_strict": sum(after_strict_list) / len(after_strict_list),
-        "answerability_before_loose": sum(before_loose_list) / len(before_loose_list),
-        "answerability_after_loose": sum(after_loose_list) / len(after_loose_list),
-        "source_t_com_sec": sum(source_latency_list) / len(source_latency_list),
-        "coded_t_com_sec": sum(coded_latency_list) / len(coded_latency_list),
+        "answerability_before_loose": mean_or_zero(before_loose_list),
+        "answerability_after_loose": mean_or_zero(after_loose_list),
+        "answerability_after_loose_validated": mean_or_zero(after_loose_validated_list),
+        "source_t_com_sec": mean_or_zero(source_latency_list),
+        "coded_t_com_sec": mean_or_zero(coded_latency_list),
     }
+    out.update(validation_summary)
+
+    return out
 
 
 def run_bbox(
@@ -249,9 +354,11 @@ def run_bbox(
     perfect_csi,
     bandwidth_hz,
     codec,
+    object_vocab_size,
 ):
     before_list = []
     after_list = []
+    after_validated_list = []
 
     source_bits_list = []
     coded_bits_list = []
@@ -261,6 +368,8 @@ def run_bbox(
     ldpc_success_list = []
     source_latency_list = []
     coded_latency_list = []
+
+    validation_results_all = []
 
     used_samples = 0
 
@@ -307,7 +416,26 @@ def run_bbox(
             codec=codec,
         )
 
-        rx_packets = decode_bboxes(rx_bits, num_bboxes=len(tx_packets))
+        rx_packets = decode_bboxes(
+            rx_bits,
+            num_bboxes=len(tx_packets),
+        )
+
+        validation_results = [
+            validate_bbox_packet(
+                pkt,
+                object_vocab_size=object_vocab_size,
+            )
+            for pkt in rx_packets
+        ]
+        validation_results_all.extend(validation_results)
+
+        selected_valid, tx_packets_valid, rx_packets_valid = filter_valid_aligned(
+            selected_units=selected,
+            tx_packets=tx_packets,
+            rx_packets=rx_packets,
+            validation_results=validation_results,
+        )
 
         delivered = delivered_bboxes_by_object_recovery(
             selected_bboxes=selected,
@@ -315,8 +443,15 @@ def run_bbox(
             rx_packets=rx_packets,
         )
 
+        delivered_validated = delivered_bboxes_by_object_recovery(
+            selected_bboxes=selected_valid,
+            tx_packets=tx_packets_valid,
+            rx_packets=rx_packets_valid,
+        )
+
         before_list.append(bbox_answerability(selected, answer))
         after_list.append(bbox_answerability(delivered, answer))
+        after_validated_list.append(bbox_answerability(delivered_validated, answer))
 
         source_bits = int(stats["source_bits"])
         coded_bits = int(stats["coded_bits"])
@@ -338,7 +473,9 @@ def run_bbox(
 
         used_samples += 1
 
-    return {
+    validation_summary = summarize_validation_results(validation_results_all)
+
+    out = {
         "semantic_type": "bbox",
         "ranking_method": method,
         "coding_mode": coding_mode,
@@ -346,24 +483,25 @@ def run_bbox(
         "snr_db": snr_db,
         "n_top": n_top,
         "num_samples": used_samples,
-        "avg_source_bits": sum(source_bits_list) / len(source_bits_list),
-        "avg_coded_bits": sum(coded_bits_list) / len(coded_bits_list),
-        "avg_code_rate": (
-            sum(source_bits_list) / len(source_bits_list)
-        ) / (
-            sum(coded_bits_list) / len(coded_bits_list)
-        ),
-        "channel_ber": sum(channel_ber_list) / len(channel_ber_list),
-        "decoded_ber": sum(decoded_ber_list) / len(decoded_ber_list),
-        "packet_error_rate": sum(per_list) / len(per_list),
-        "ldpc_block_success_rate": sum(ldpc_success_list) / len(ldpc_success_list),
+        "avg_source_bits": mean_or_zero(source_bits_list),
+        "avg_coded_bits": mean_or_zero(coded_bits_list),
+        "avg_code_rate": mean_or_zero(source_bits_list) / mean_or_zero(coded_bits_list),
+        "channel_ber": mean_or_zero(channel_ber_list),
+        "decoded_ber": mean_or_zero(decoded_ber_list),
+        "packet_error_rate": mean_or_zero(per_list),
+        "ldpc_block_success_rate": mean_or_zero(ldpc_success_list),
         "answerability_before_strict": "",
         "answerability_after_strict": "",
-        "answerability_before_loose": sum(before_list) / len(before_list),
-        "answerability_after_loose": sum(after_list) / len(after_list),
-        "source_t_com_sec": sum(source_latency_list) / len(source_latency_list),
-        "coded_t_com_sec": sum(coded_latency_list) / len(coded_latency_list),
+        "answerability_after_strict_validated": "",
+        "answerability_before_loose": mean_or_zero(before_list),
+        "answerability_after_loose": mean_or_zero(after_list),
+        "answerability_after_loose_validated": mean_or_zero(after_validated_list),
+        "source_t_com_sec": mean_or_zero(source_latency_list),
+        "coded_t_com_sec": mean_or_zero(coded_latency_list),
     }
+    out.update(validation_summary)
+
+    return out
 
 
 def main() -> None:
@@ -380,7 +518,10 @@ def main() -> None:
     channels = ["awgn", "rayleigh"]
     coding_modes = ["uncoded", "ldpc_like"]
 
-    ds = GQACommSubset(Path(cfg["data"]["root"]))
+    data_root = Path(cfg["data"]["root"])
+    ds = GQACommSubset(data_root)
+
+    object_vocab_size, relation_vocab_size = get_vocab_sizes(cfg, data_root)
 
     samples = ds.load_samples(limit=max_samples)
     sample_by_qid = {s["question_id"]: s for s in samples}
@@ -423,6 +564,8 @@ def main() -> None:
                             perfect_csi=perfect_csi,
                             bandwidth_hz=bandwidth_hz,
                             codec=codec,
+                            object_vocab_size=object_vocab_size,
+                            relation_vocab_size=relation_vocab_size,
                         )
                         out_rows.append(sg_row)
                         print(sg_row)
@@ -440,6 +583,7 @@ def main() -> None:
                             perfect_csi=perfect_csi,
                             bandwidth_hz=bandwidth_hz,
                             codec=codec,
+                            object_vocab_size=object_vocab_size,
                         )
                         out_rows.append(bbox_row)
                         print(bbox_row)
@@ -448,10 +592,7 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / "answerability_sweep_ldpc.csv"
 
-    with output_path.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=list(out_rows[0].keys()))
-        writer.writeheader()
-        writer.writerows(out_rows)
+    write_csv_union_fieldnames(output_path, out_rows)
 
     print(f"\nSaved: {output_path}")
 

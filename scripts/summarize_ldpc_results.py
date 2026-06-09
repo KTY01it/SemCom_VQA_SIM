@@ -23,10 +23,17 @@ def to_float(x, default=None):
         return default
 
 
+def get_metric(row, preferred_key: str, fallback_key: str, default=None):
+    value = to_float(row.get(preferred_key), default=None)
+    if value is not None:
+        return value
+    return to_float(row.get(fallback_key), default=default)
+
+
 def print_table(title: str, rows: List[List[Any]], headers: List[str]) -> None:
-    print("\n" + "=" * 120)
+    print("\n" + "=" * 130)
     print(title)
-    print("=" * 120)
+    print("=" * 130)
 
     table = [headers] + rows
     widths = [max(len(str(r[i])) for r in table) for i in range(len(headers))]
@@ -68,8 +75,16 @@ def summarize_sg_ldpc_gain(rows):
                 u = idx[k_uncoded]
                 l = idx[k_ldpc]
 
-                u_ans = to_float(u["answerability_after_strict"])
-                l_ans = to_float(l["answerability_after_strict"])
+                u_ans = get_metric(
+                    u,
+                    "answerability_after_strict_validated",
+                    "answerability_after_strict",
+                )
+                l_ans = get_metric(
+                    l,
+                    "answerability_after_strict_validated",
+                    "answerability_after_strict",
+                )
 
                 u_ber = to_float(u["decoded_ber"])
                 l_ber = to_float(l["decoded_ber"])
@@ -91,11 +106,13 @@ def summarize_sg_ldpc_gain(rows):
                     f"{l_ber:.5f}",
                     f"{u_per:.4f}",
                     f"{l_per:.4f}",
+                    f"{to_float(u.get('valid_packet_rate'), default=0.0):.4f}",
+                    f"{to_float(l.get('valid_packet_rate'), default=0.0):.4f}",
                     f"{l_t / u_t:.2f}x" if u_t > 0 else "NA",
                 ])
 
     print_table(
-        title="Table 1 — GO-SG LDPC gain: strict answerability after channel",
+        title="Table 1 — GO-SG LDPC-like gain: validated strict proxy answerability",
         headers=[
             "channel",
             "snr",
@@ -107,6 +124,8 @@ def summarize_sg_ldpc_gain(rows):
             "ldpc_BER",
             "uncoded_PER",
             "ldpc_PER",
+            "uncoded_valid",
+            "ldpc_valid",
             "latency_x",
         ],
         rows=out,
@@ -129,8 +148,16 @@ def summarize_bbox_ldpc_gain(rows):
                 u = idx[k_uncoded]
                 l = idx[k_ldpc]
 
-                u_ans = to_float(u["answerability_after_loose"])
-                l_ans = to_float(l["answerability_after_loose"])
+                u_ans = get_metric(
+                    u,
+                    "answerability_after_loose_validated",
+                    "answerability_after_loose",
+                )
+                l_ans = get_metric(
+                    l,
+                    "answerability_after_loose_validated",
+                    "answerability_after_loose",
+                )
 
                 u_ber = to_float(u["decoded_ber"])
                 l_ber = to_float(l["decoded_ber"])
@@ -152,11 +179,13 @@ def summarize_bbox_ldpc_gain(rows):
                     f"{l_ber:.5f}",
                     f"{u_per:.4f}",
                     f"{l_per:.4f}",
+                    f"{to_float(u.get('valid_packet_rate'), default=0.0):.4f}",
+                    f"{to_float(l.get('valid_packet_rate'), default=0.0):.4f}",
                     f"{l_t / u_t:.2f}x" if u_t > 0 else "NA",
                 ])
 
     print_table(
-        title="Table 2 — GO-BBox LDPC gain: loose answerability after channel",
+        title="Table 2 — GO-BBox LDPC-like gain: validated loose proxy answerability",
         headers=[
             "channel",
             "snr",
@@ -168,6 +197,8 @@ def summarize_bbox_ldpc_gain(rows):
             "ldpc_BER",
             "uncoded_PER",
             "ldpc_PER",
+            "uncoded_valid",
+            "ldpc_valid",
             "latency_x",
         ],
         rows=out,
@@ -193,11 +224,27 @@ def summarize_rayleigh_best(rows):
                 l = idx[k_ldpc]
 
                 if semantic_type == "sg":
-                    u_ans = to_float(u["answerability_after_strict"])
-                    l_ans = to_float(l["answerability_after_strict"])
+                    u_ans = get_metric(
+                        u,
+                        "answerability_after_strict_validated",
+                        "answerability_after_strict",
+                    )
+                    l_ans = get_metric(
+                        l,
+                        "answerability_after_strict_validated",
+                        "answerability_after_strict",
+                    )
                 else:
-                    u_ans = to_float(u["answerability_after_loose"])
-                    l_ans = to_float(l["answerability_after_loose"])
+                    u_ans = get_metric(
+                        u,
+                        "answerability_after_loose_validated",
+                        "answerability_after_loose",
+                    )
+                    l_ans = get_metric(
+                        l,
+                        "answerability_after_loose_validated",
+                        "answerability_after_loose",
+                    )
 
                 gain = l_ans - u_ans
 
@@ -212,6 +259,8 @@ def summarize_rayleigh_best(rows):
                         "uncoded_t": to_float(u["coded_t_com_sec"]),
                         "ldpc_t": to_float(l["coded_t_com_sec"]),
                         "ldpc_success": to_float(l["ldpc_block_success_rate"]),
+                        "uncoded_valid": to_float(u.get("valid_packet_rate"), default=0.0),
+                        "ldpc_valid": to_float(l.get("valid_packet_rate"), default=0.0),
                     }
 
             if best is not None:
@@ -222,12 +271,14 @@ def summarize_rayleigh_best(rows):
                     f"{best['uncoded_ans']:.4f}",
                     f"{best['ldpc_ans']:.4f}",
                     f"{best['gain']:+.4f}",
+                    f"{best['uncoded_valid']:.4f}",
+                    f"{best['ldpc_valid']:.4f}",
                     f"{best['ldpc_t'] / best['uncoded_t']:.2f}x",
                     f"{best['ldpc_success']:.4f}",
                 ])
 
     print_table(
-        title="Table 3 — Best LDPC gains on Rayleigh channel",
+        title="Table 3 — Best LDPC-like gains on Rayleigh channel, validated/drop-invalid",
         headers=[
             "type",
             "snr",
@@ -235,6 +286,8 @@ def summarize_rayleigh_best(rows):
             "uncoded_ans",
             "ldpc_ans",
             "gain",
+            "uncoded_valid",
+            "ldpc_valid",
             "latency_x",
             "ldpc_success",
         ],
@@ -247,6 +300,7 @@ def main():
     rows = read_csv(path)
 
     print(f"Loaded rows: {len(rows)} from {path}")
+    print("Primary metric: *_validated answerability after invalid-packet drop.")
 
     summarize_sg_ldpc_gain(rows)
     summarize_bbox_ldpc_gain(rows)

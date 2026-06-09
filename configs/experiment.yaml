@@ -11,6 +11,13 @@ data:
   relation_vocab_file: relation_vocab.json
   answer_vocab_file: answer_vocab.json
 
+image:
+  mode: raw_float32
+  height: 480
+  width: 320
+  channels: 3
+  bits_per_value: 32
+
 source:
   mode: random_bits        # random_bits | sg_packet | bbox_packet
   num_bits: 4096
@@ -29,6 +36,17 @@ channel:
 latency:
   bandwidth_hz: 100000
   use_shannon_like_rate: true
+
+  # Paper-style compute latency approximation
+  device_tflops: 1.33
+  bbox_extraction_tflops: 0.44
+  sg_generation_tflops: 0.02
+
+  # Lightweight placeholders
+  question_parser_ms: 0.0
+  answer_reasoning_ms: 0.0
+  ranking_ms: 0.1
+  channel_decode_ms: 0.0
 
 ldpc:
   enabled: false

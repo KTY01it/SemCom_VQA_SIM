@@ -1,7 +1,7 @@
 import csv
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, List, Any
+from typing import Any, Dict, List
 
 
 def read_csv(path: str | Path) -> List[Dict[str, Any]]:
@@ -28,6 +28,16 @@ def to_float(x, default=None):
         return default
 
 
+def get_metric(row, preferred_key: str, fallback_key: str, default=None):
+    """
+    Use validated metric first. Fall back to raw metric for backward compatibility.
+    """
+    value = to_float(row.get(preferred_key), default=None)
+    if value is not None:
+        return value
+    return to_float(row.get(fallback_key), default=default)
+
+
 def filter_rows(rows, **conditions):
     out = []
 
@@ -46,9 +56,9 @@ def filter_rows(rows, **conditions):
 
 
 def print_table(title: str, rows: List[List[Any]], headers: List[str]) -> None:
-    print("\n" + "=" * 100)
+    print("\n" + "=" * 110)
     print(title)
-    print("=" * 100)
+    print("=" * 110)
 
     table = [headers] + rows
     widths = [max(len(str(r[i])) for r in table) for i in range(len(headers))]
@@ -64,8 +74,8 @@ def print_table(title: str, rows: List[List[Any]], headers: List[str]) -> None:
 def summarize_sg_answerability(answer_rows):
     """
     Main table:
-    SG strict answerability after channel.
-    This is the strongest task-oriented proxy for relation-aware VQA.
+    SG strict proxy answerability after channel.
+    Prefer validated metric after dropping invalid semantic packets.
     """
     out = []
 
@@ -83,9 +93,21 @@ def summarize_sg_answerability(answer_rows):
             if not all(m in by_method for m in ["original", "do", "go"]):
                 continue
 
-            original = to_float(by_method["original"]["answerability_after_strict"])
-            do = to_float(by_method["do"]["answerability_after_strict"])
-            go = to_float(by_method["go"]["answerability_after_strict"])
+            original = get_metric(
+                by_method["original"],
+                "answerability_after_strict_validated",
+                "answerability_after_strict",
+            )
+            do = get_metric(
+                by_method["do"],
+                "answerability_after_strict_validated",
+                "answerability_after_strict",
+            )
+            go = get_metric(
+                by_method["go"],
+                "answerability_after_strict_validated",
+                "answerability_after_strict",
+            )
 
             go_gain_vs_original = go - original
             go_gain_vs_do = go - do
@@ -98,10 +120,12 @@ def summarize_sg_answerability(answer_rows):
                 f"{go:.4f}",
                 f"{go_gain_vs_original:+.4f}",
                 f"{go_gain_vs_do:+.4f}",
+                f"{to_float(by_method['go'].get('valid_packet_rate'), default=0.0):.4f}",
+                f"{to_float(by_method['go'].get('invalid_packet_rate'), default=0.0):.4f}",
             ])
 
     print_table(
-        title="Table 1 — SG strict answerability after channel",
+        title="Table 1 — SG strict proxy answerability after channel, validated/drop-invalid",
         headers=[
             "channel",
             "n_top",
@@ -110,6 +134,8 @@ def summarize_sg_answerability(answer_rows):
             "GO-SG",
             "GO-Orig",
             "GO-DO",
+            "GO valid",
+            "GO invalid",
         ],
         rows=out,
     )
@@ -118,7 +144,7 @@ def summarize_sg_answerability(answer_rows):
 def summarize_bbox_answerability(answer_rows):
     """
     BBox has no relation.
-    Use loose answerability: answer object/attribute appears in delivered bboxes.
+    Use loose proxy answerability after dropping invalid BBox packets.
     """
     out = []
 
@@ -136,9 +162,21 @@ def summarize_bbox_answerability(answer_rows):
             if not all(m in by_method for m in ["original", "do", "go"]):
                 continue
 
-            original = to_float(by_method["original"]["answerability_after_loose"])
-            do = to_float(by_method["do"]["answerability_after_loose"])
-            go = to_float(by_method["go"]["answerability_after_loose"])
+            original = get_metric(
+                by_method["original"],
+                "answerability_after_loose_validated",
+                "answerability_after_loose",
+            )
+            do = get_metric(
+                by_method["do"],
+                "answerability_after_loose_validated",
+                "answerability_after_loose",
+            )
+            go = get_metric(
+                by_method["go"],
+                "answerability_after_loose_validated",
+                "answerability_after_loose",
+            )
 
             go_gain_vs_original = go - original
             go_gain_vs_do = go - do
@@ -151,10 +189,12 @@ def summarize_bbox_answerability(answer_rows):
                 f"{go:.4f}",
                 f"{go_gain_vs_original:+.4f}",
                 f"{go_gain_vs_do:+.4f}",
+                f"{to_float(by_method['go'].get('valid_packet_rate'), default=0.0):.4f}",
+                f"{to_float(by_method['go'].get('invalid_packet_rate'), default=0.0):.4f}",
             ])
 
     print_table(
-        title="Table 2 — BBox loose answerability after channel",
+        title="Table 2 — BBox loose proxy answerability after channel, validated/drop-invalid",
         headers=[
             "channel",
             "n_top",
@@ -163,6 +203,8 @@ def summarize_bbox_answerability(answer_rows):
             "GO-BBox",
             "GO-Orig",
             "GO-DO",
+            "GO valid",
+            "GO invalid",
         ],
         rows=out,
     )
@@ -170,8 +212,8 @@ def summarize_bbox_answerability(answer_rows):
 
 def summarize_before_after_drop(answer_rows):
     """
-    Show how much the channel damages answerability.
-    Focus on GO, because GO is the proposed ranking.
+    Show how much the channel damages validated answerability.
+    Focus on GO.
     """
     out = []
 
@@ -193,35 +235,49 @@ def summarize_before_after_drop(answer_rows):
 
                 if semantic_type == "sg":
                     before = to_float(r["answerability_before_strict"])
-                    after = to_float(r["answerability_after_strict"])
+                    after_raw = to_float(r["answerability_after_strict"])
+                    after_validated = get_metric(
+                        r,
+                        "answerability_after_strict_validated",
+                        "answerability_after_strict",
+                    )
                 else:
                     before = to_float(r["answerability_before_loose"])
-                    after = to_float(r["answerability_after_loose"])
+                    after_raw = to_float(r["answerability_after_loose"])
+                    after_validated = get_metric(
+                        r,
+                        "answerability_after_loose_validated",
+                        "answerability_after_loose",
+                    )
 
-                drop = before - after
+                drop_validated = before - after_validated
 
                 out.append([
                     semantic_type,
                     channel,
                     n_top,
                     f"{before:.4f}",
-                    f"{after:.4f}",
-                    f"{drop:+.4f}",
+                    f"{after_raw:.4f}",
+                    f"{after_validated:.4f}",
+                    f"{drop_validated:+.4f}",
                     f"{to_float(r['ber']):.6f}",
                     f"{to_float(r['packet_error_rate']):.4f}",
+                    f"{to_float(r.get('valid_packet_rate'), default=0.0):.4f}",
                 ])
 
     print_table(
-        title="Table 3 — Channel-induced answerability drop for GO",
+        title="Table 3 — Channel-induced proxy answerability drop for GO, validated/drop-invalid",
         headers=[
             "type",
             "channel",
             "n_top",
             "before",
-            "after",
-            "drop",
+            "after_raw",
+            "after_valid",
+            "drop_valid",
             "BER",
             "PER",
+            "valid_rate",
         ],
         rows=out,
     )
@@ -229,8 +285,7 @@ def summarize_before_after_drop(answer_rows):
 
 def summarize_latency(answer_rows):
     """
-    Compare SG vs BBox latency under GO.
-    Ranking does not change packet size much, so GO is enough.
+    Compare SG vs BBox communication latency under GO.
     """
     out = []
 
@@ -262,6 +317,17 @@ def summarize_latency(answer_rows):
             sg_t = to_float(sg["t_com_sec"])
             bbox_t = to_float(bbox["t_com_sec"])
 
+            sg_ans = get_metric(
+                sg,
+                "answerability_after_strict_validated",
+                "answerability_after_strict",
+            )
+            bbox_ans = get_metric(
+                bbox,
+                "answerability_after_loose_validated",
+                "answerability_after_loose",
+            )
+
             out.append([
                 channel,
                 n_top,
@@ -270,10 +336,12 @@ def summarize_latency(answer_rows):
                 f"{sg_t:.6f}",
                 f"{bbox_t:.6f}",
                 f"{bbox_t / sg_t:.2f}x" if sg_t > 0 else "NA",
+                f"{sg_ans:.4f}",
+                f"{bbox_ans:.4f}",
             ])
 
     print_table(
-        title="Table 4 — SG vs BBox communication cost under GO",
+        title="Table 4 — SG vs BBox communication cost under GO, validated/drop-invalid",
         headers=[
             "channel",
             "n_top",
@@ -282,6 +350,8 @@ def summarize_latency(answer_rows):
             "SG t_com",
             "BBox t_com",
             "BBox/SG",
+            "SG ans",
+            "BBox ans",
         ],
         rows=out,
     )
@@ -289,7 +359,7 @@ def summarize_latency(answer_rows):
 
 def summarize_best_setting(answer_rows):
     """
-    Find best answerability_after under each semantic type/channel/method.
+    Find best validated answerability under each semantic type/channel/method.
     """
     grouped = defaultdict(list)
 
@@ -311,9 +381,19 @@ def summarize_best_setting(answer_rows):
 
         for r in group:
             if semantic_type == "sg":
-                score = to_float(r["answerability_after_strict"], default=-1.0)
+                score = get_metric(
+                    r,
+                    "answerability_after_strict_validated",
+                    "answerability_after_strict",
+                    default=-1.0,
+                )
             else:
-                score = to_float(r["answerability_after_loose"], default=-1.0)
+                score = get_metric(
+                    r,
+                    "answerability_after_loose_validated",
+                    "answerability_after_loose",
+                    default=-1.0,
+                )
 
             if score > best_score:
                 best_score = score
@@ -330,29 +410,148 @@ def summarize_best_setting(answer_rows):
             f"{best_score:.4f}",
             f"{to_float(best_row['avg_source_bits']):.1f}",
             f"{to_float(best_row['t_com_sec']):.6f}",
+            f"{to_float(best_row.get('valid_packet_rate'), default=0.0):.4f}",
         ])
 
     print_table(
-        title="Table 5 — Best answerability setting per method",
+        title="Table 5 — Best validated proxy answerability setting per method",
         headers=[
             "type",
             "channel",
             "method",
             "best_n_top",
-            "best_after",
+            "best_valid_after",
             "bits",
             "t_com",
+            "valid_rate",
         ],
         rows=out,
     )
 
+def summarize_image_baseline(image_rows):
+    """
+    Compare raw image transmission against GO semantic transmission.
 
+    This is a communication-cost baseline only.
+    It does not claim image-level VQA accuracy.
+    """
+    comparison_rows = [
+        r for r in image_rows
+        if r.get("row_type") == "image_vs_semantic"
+    ]
+
+    if not comparison_rows:
+        print("\nNo image_vs_semantic rows found in image_baseline.csv")
+        return
+
+    out = []
+
+    for channel in ["awgn", "rayleigh"]:
+        for semantic_type in ["sg", "bbox"]:
+            selected = [
+                r for r in comparison_rows
+                if r.get("channel") == channel and r.get("semantic_type") == semantic_type
+            ]
+
+            selected = sorted(selected, key=lambda r: float(r["n_top"]))
+
+            for r in selected:
+                out.append([
+                    channel,
+                    semantic_type,
+                    str(int(float(r["n_top"]))),
+                    f"{to_float(r['image_bits']):.0f}",
+                    f"{to_float(r['semantic_bits']):.1f}",
+                    f"{to_float(r['image_to_semantic_bit_ratio']):.1f}x",
+                    f"{to_float(r['image_t_com_sec']):.3f}",
+                    f"{to_float(r['semantic_t_com_sec']):.6f}",
+                    f"{to_float(r['image_to_semantic_latency_ratio']):.1f}x",
+                    f"{to_float(r['semantic_answerability_validated']):.4f}",
+                ])
+
+    print_table(
+        title="Table 6 — Raw Image Transmission vs GO semantic transmission",
+        headers=[
+            "channel",
+            "type",
+            "n_top",
+            "image_bits",
+            "semantic_bits",
+            "bit_ratio",
+            "image_t",
+            "semantic_t",
+            "latency_ratio",
+            "semantic_ans",
+        ],
+        rows=out,
+    )
+    
+def summarize_total_latency_breakdown(latency_rows):
+    """
+    Summarize paper-style total latency:
+        t_total = max(t_question_parser, t_image_processing + t_com + t_decode)
+                  + t_answer_reasoning
+
+    Uses results/latency_breakdown.csv.
+    """
+    comparison_rows = [
+        r for r in latency_rows
+        if r.get("row_type") == "image_vs_semantic_total"
+    ]
+
+    if not comparison_rows:
+        print("\nNo image_vs_semantic_total rows found in latency_breakdown.csv")
+        return
+
+    out = []
+
+    for channel in ["awgn", "rayleigh"]:
+        for semantic_type in ["sg", "bbox"]:
+            selected = [
+                r for r in comparison_rows
+                if r.get("channel") == channel and r.get("semantic_type") == semantic_type
+            ]
+            selected = sorted(selected, key=lambda r: float(r["n_top"]))
+
+            for r in selected:
+                out.append([
+                    channel,
+                    semantic_type,
+                    str(int(float(r["n_top"]))),
+                    f"{to_float(r['image_t_total_ms']):.2f}",
+                    f"{to_float(r['semantic_t_total_ms']):.2f}",
+                    f"{to_float(r['image_to_semantic_total_ratio']):.2f}x",
+                    f"{to_float(r['image_t_com_ms']):.2f}",
+                    f"{to_float(r['semantic_t_com_ms']):.3f}",
+                    f"{to_float(r['semantic_answerability_validated']):.4f}",
+                    f"{to_float(r['semantic_valid_packet_rate']):.4f}",
+                ])
+
+    print_table(
+        title="Table 7 — Paper-style total latency: Raw Image vs GO semantic transmission",
+        headers=[
+            "channel",
+            "type",
+            "n_top",
+            "image_total_ms",
+            "semantic_total_ms",
+            "total_ratio",
+            "image_com_ms",
+            "semantic_com_ms",
+            "semantic_ans",
+            "valid_rate",
+        ],
+        rows=out,
+    )
+    
 def main() -> None:
     answer_path = Path("results/answerability_sweep.csv")
+    image_path = Path("results/image_baseline.csv")
 
     answer_rows = read_csv(answer_path)
 
     print(f"Loaded answerability rows: {len(answer_rows)} from {answer_path}")
+    print("Primary metric: *_validated answerability after invalid-packet drop.")
 
     summarize_sg_answerability(answer_rows)
     summarize_bbox_answerability(answer_rows)
@@ -360,6 +559,21 @@ def main() -> None:
     summarize_latency(answer_rows)
     summarize_best_setting(answer_rows)
 
+    if image_path.exists():
+        image_rows = read_csv(image_path)
+        print(f"\nLoaded image baseline rows: {len(image_rows)} from {image_path}")
+        summarize_image_baseline(image_rows)
+    else:
+        print(f"\nImage baseline missing: {image_path}")
+
+    latency_path = Path("results/latency_breakdown.csv")
+    if latency_path.exists():
+        latency_rows = read_csv(latency_path)
+        print(f"\nLoaded latency breakdown rows: {len(latency_rows)} from {latency_path}")
+        summarize_total_latency_breakdown(latency_rows)
+    else:
+        print(f"\nLatency breakdown missing: {latency_path}")
+        
 
 if __name__ == "__main__":
     main()
