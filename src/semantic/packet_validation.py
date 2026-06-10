@@ -22,6 +22,57 @@ def _get_field(packet: Any, name: str) -> Any:
     return getattr(packet, name, None)
 
 
+def vocab_to_valid_id_set(vocab: Any) -> set[int]:
+    """
+    Convert vocab object to a set of valid integer IDs.
+
+    Supported formats:
+      - {"label": id, ...}
+      - [id0, id1, ...]
+      - ["label0", "label1", ...] fallback: {0, 1, ..., len(vocab)-1}
+    """
+    if isinstance(vocab, Mapping):
+        valid_ids = set()
+        for value in vocab.values():
+            try:
+                valid_ids.add(int(value))
+            except Exception:
+                continue
+        return valid_ids
+
+    if isinstance(vocab, list):
+        if all(isinstance(x, int) for x in vocab):
+            return {int(x) for x in vocab}
+        return set(range(len(vocab)))
+
+    raise TypeError(f"Unsupported vocab type: {type(vocab)}")
+
+
+def _normalize_valid_ids(valid_ids: Any | None) -> set[int] | None:
+    if valid_ids is None:
+        return None
+    return {int(x) for x in valid_ids}
+
+
+def _id_is_valid(
+    value: int,
+    valid_ids: set[int] | None = None,
+    vocab_size: int | None = None,
+) -> bool:
+    """
+    Prefer exact vocab ID-set validation.
+
+    vocab_size is kept only for backward compatibility with old scripts/tests.
+    """
+    if valid_ids is not None:
+        return value in valid_ids
+
+    if vocab_size is not None:
+        return 0 <= value < vocab_size
+
+    raise ValueError("Either valid_ids or vocab_size must be provided")
+
+
 def bits_to_bytes_for_crc(bits: np.ndarray) -> bytes:
     bits = np.asarray(bits, dtype=np.uint8)
     if bits.ndim != 1:
@@ -93,17 +144,24 @@ def check_crc16(bits_with_crc: np.ndarray) -> tuple[np.ndarray, PacketValidation
 
 def validate_sg_packet(
     packet: Any,
-    object_vocab_size: int,
-    relation_vocab_size: int,
+    object_vocab_size: int | None = None,
+    relation_vocab_size: int | None = None,
+    valid_object_ids: set[int] | None = None,
+    valid_relation_ids: set[int] | None = None,
 ) -> PacketValidationResult:
     """
     Validate decoded SG triplet packet.
 
-    Expected fields:
-      - subject_id
-      - relation_id
-      - object_id
+    Preferred validation:
+      subject_id in valid_object_ids
+      object_id in valid_object_ids
+      relation_id in valid_relation_ids
+
+    object_vocab_size/relation_vocab_size are kept for backward compatibility.
     """
+    valid_object_ids = _normalize_valid_ids(valid_object_ids)
+    valid_relation_ids = _normalize_valid_ids(valid_relation_ids)
+
     subject_id = _get_field(packet, "subject_id")
     relation_id = _get_field(packet, "relation_id")
     object_id = _get_field(packet, "object_id")
@@ -118,13 +176,25 @@ def validate_sg_packet(
     except Exception:
         return PacketValidationResult(False, "non_integer_sg_id")
 
-    if not (0 <= subject_id < object_vocab_size):
+    if not _id_is_valid(
+        subject_id,
+        valid_ids=valid_object_ids,
+        vocab_size=object_vocab_size,
+    ):
         return PacketValidationResult(False, "subject_id_oov")
 
-    if not (0 <= object_id < object_vocab_size):
+    if not _id_is_valid(
+        object_id,
+        valid_ids=valid_object_ids,
+        vocab_size=object_vocab_size,
+    ):
         return PacketValidationResult(False, "object_id_oov")
 
-    if not (0 <= relation_id < relation_vocab_size):
+    if not _id_is_valid(
+        relation_id,
+        valid_ids=valid_relation_ids,
+        vocab_size=relation_vocab_size,
+    ):
         return PacketValidationResult(False, "relation_id_oov")
 
     return PacketValidationResult(True, "ok")
@@ -132,15 +202,19 @@ def validate_sg_packet(
 
 def validate_bbox_packet(
     packet: Any,
-    object_vocab_size: int,
+    object_vocab_size: int | None = None,
+    valid_object_ids: set[int] | None = None,
 ) -> PacketValidationResult:
     """
     Validate decoded BBox packet.
 
-    Expected fields:
-      - object_id
-      - x1, y1, x2, y2
+    Preferred validation:
+      object_id in valid_object_ids
+
+    object_vocab_size is kept for backward compatibility.
     """
+    valid_object_ids = _normalize_valid_ids(valid_object_ids)
+
     object_id = _get_field(packet, "object_id")
     x1 = _get_field(packet, "x1")
     y1 = _get_field(packet, "y1")
@@ -155,7 +229,11 @@ def validate_bbox_packet(
     except Exception:
         return PacketValidationResult(False, "non_integer_object_id")
 
-    if not (0 <= object_id < object_vocab_size):
+    if not _id_is_valid(
+        object_id,
+        valid_ids=valid_object_ids,
+        vocab_size=object_vocab_size,
+    ):
         return PacketValidationResult(False, "object_id_oov")
 
     coords = [x1, y1, x2, y2]

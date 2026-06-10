@@ -21,6 +21,7 @@ from src.semantic.packet_codec import (
 from src.semantic.packet_validation import (
     summarize_validation_results,
     validate_sg_packet,
+    vocab_to_valid_id_set,
 )
 from src.utils.config import load_yaml
 
@@ -48,14 +49,32 @@ def load_json(path: Path):
         return json.load(f)
 
 
-def get_vocab_sizes(cfg, data_root: Path) -> tuple[int, int]:
-    object_vocab_name = cfg["data"].get("object_vocab", "object_vocab.json")
-    relation_vocab_name = cfg["data"].get("relation_vocab", "relation_vocab.json")
+def get_vocab_info(cfg, data_root: Path) -> dict:
+    object_vocab_name = cfg["data"].get(
+        "object_vocab_file",
+        cfg["data"].get("object_vocab", "object_vocab.json"),
+    )
+    relation_vocab_name = cfg["data"].get(
+        "relation_vocab_file",
+        cfg["data"].get("relation_vocab", "relation_vocab.json"),
+    )
 
     object_vocab = load_json(data_root / object_vocab_name)
     relation_vocab = load_json(data_root / relation_vocab_name)
 
-    return len(object_vocab), len(relation_vocab)
+    valid_object_ids = vocab_to_valid_id_set(object_vocab)
+    valid_relation_ids = vocab_to_valid_id_set(relation_vocab)
+
+    return {
+        "object_vocab_size": len(object_vocab),
+        "relation_vocab_size": len(relation_vocab),
+        "valid_object_ids": valid_object_ids,
+        "valid_relation_ids": valid_relation_ids,
+        "min_object_id": min(valid_object_ids) if valid_object_ids else None,
+        "max_object_id": max(valid_object_ids) if valid_object_ids else None,
+        "min_relation_id": min(valid_relation_ids) if valid_relation_ids else None,
+        "max_relation_id": max(valid_relation_ids) if valid_relation_ids else None,
+    }
 
 
 def mean_or_zero(values):
@@ -93,7 +112,24 @@ def main() -> None:
     ds = GQACommSubset(data_root)
     rows_raw = ds.load_sg_triplets(limit=max_samples)
 
-    object_vocab_size, relation_vocab_size = get_vocab_sizes(cfg, data_root)
+    vocab_info = get_vocab_info(cfg, data_root)
+
+    object_vocab_size = vocab_info["object_vocab_size"]
+    relation_vocab_size = vocab_info["relation_vocab_size"]
+    valid_object_ids = vocab_info["valid_object_ids"]
+    valid_relation_ids = vocab_info["valid_relation_ids"]
+
+    print(
+        "Vocab ID ranges:",
+        {
+            "object_vocab_size": object_vocab_size,
+            "relation_vocab_size": relation_vocab_size,
+            "min_object_id": vocab_info["min_object_id"],
+            "max_object_id": vocab_info["max_object_id"],
+            "min_relation_id": vocab_info["min_relation_id"],
+            "max_relation_id": vocab_info["max_relation_id"],
+        },
+    )
 
     out_rows = []
 
@@ -145,6 +181,8 @@ def main() -> None:
                         pkt,
                         object_vocab_size=object_vocab_size,
                         relation_vocab_size=relation_vocab_size,
+                        valid_object_ids=valid_object_ids,
+                        valid_relation_ids=valid_relation_ids,
                     )
                     for pkt in rx_packets
                 ]

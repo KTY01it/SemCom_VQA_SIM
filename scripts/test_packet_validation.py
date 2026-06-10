@@ -78,11 +78,54 @@ def test_bbox_validation() -> None:
     assert r3.reason == "bbox_coord_out_of_range"
 
 
+def test_actual_vocab_id_set_validation():
+    from src.semantic.packet_codec import BBoxPacket, SGTripletPacket
+    from src.semantic.packet_validation import validate_bbox_packet, validate_sg_packet
+
+    valid_object_ids = {1, 2, 3}
+    valid_relation_ids = {1, 2}
+
+    valid_sg = SGTripletPacket(subject_id=1, relation_id=1, object_id=2)
+    zero_subject = SGTripletPacket(subject_id=0, relation_id=1, object_id=2)
+    max_valid_object = SGTripletPacket(subject_id=3, relation_id=2, object_id=3)
+
+    assert validate_sg_packet(
+        valid_sg,
+        valid_object_ids=valid_object_ids,
+        valid_relation_ids=valid_relation_ids,
+    ).valid
+
+    assert not validate_sg_packet(
+        zero_subject,
+        valid_object_ids=valid_object_ids,
+        valid_relation_ids=valid_relation_ids,
+    ).valid
+
+    assert validate_sg_packet(
+        max_valid_object,
+        valid_object_ids=valid_object_ids,
+        valid_relation_ids=valid_relation_ids,
+    ).valid
+
+    valid_bbox = BBoxPacket(object_id=3, x1=0.1, y1=0.1, x2=0.5, y2=0.5)
+    zero_bbox = BBoxPacket(object_id=0, x1=0.1, y1=0.1, x2=0.5, y2=0.5)
+
+    assert validate_bbox_packet(
+        valid_bbox,
+        valid_object_ids=valid_object_ids,
+    ).valid
+
+    assert not validate_bbox_packet(
+        zero_bbox,
+        valid_object_ids=valid_object_ids,
+    ).valid
+
 def main() -> None:
     test_crc_ok()
     test_crc_fail()
     test_sg_vocab_validation()
     test_bbox_validation()
+    test_actual_vocab_id_set_validation()
     print("packet validation tests: PASS")
 
 

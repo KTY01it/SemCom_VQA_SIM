@@ -13,6 +13,7 @@ REQUIRED_FILES = [
     "results/summary_tables.txt",
     "results/summary_ldpc_tables.txt",
     "results/experiment_summary.md",
+    "results/proxy_metric_contract.json",    
 ]
 
 REQUIRED_FIGURES = [
@@ -155,6 +156,10 @@ def main() -> None:
             "answerability_after_loose_validated",
             "valid_packet_rate",
             "invalid_packet_rate",
+            "coding_family",
+            "decoder_type",
+            "soft_llr_decoder",
+            "standard_ldpc_bp",            
         ],
     ) and ok
 
@@ -198,6 +203,8 @@ def main() -> None:
             "Raw Image Transmission",
             "Paper-style total latency",
             "LDPC-like",
+            "Proxy Metric Contract",
+            "validated_answer_related_semantic_coverage",            
         ],
     ) and ok
 

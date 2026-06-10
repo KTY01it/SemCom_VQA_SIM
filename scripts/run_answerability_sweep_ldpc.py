@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List
 
+from scripts.run_answerability_sweep import get_vocab_info
 from src.comm.latency import communication_latency_sec
 from src.comm.ldpc_codec import LDPCConfig, SystematicLDPC
 from src.comm.transmission import transmit_ldpc_bits, transmit_uncoded_bits
@@ -30,6 +31,7 @@ from src.semantic.packet_validation import (
     summarize_validation_results,
     validate_bbox_packet,
     validate_sg_packet,
+    vocab_to_valid_id_set,
 )
 from src.semantic.ranking import (
     build_object_frequency,
@@ -131,6 +133,51 @@ def select_triplets(
     raise ValueError(f"Unknown sg ranking method: {method}")
 
 
+def coding_metadata_for_mode(coding_mode, codec):
+    if coding_mode == "uncoded":
+        return {
+            "coding_family": "uncoded",
+            "decoder_type": "hard_bpsk_decision",
+            "soft_llr_decoder": False,
+            "standard_ldpc_bp": False,
+            "k": "",
+            "m": "",
+            "n": "",
+            "nominal_code_rate": 1.0,
+            "col_weight": "",
+            "max_iter": "",
+        }
+
+    if coding_mode == "ldpc_like":
+        if codec is None:
+            return {
+                "coding_family": "ldpc_like_sparse_systematic",
+                "decoder_type": "hard_bit_flipping",
+                "soft_llr_decoder": False,
+                "standard_ldpc_bp": False,
+                "k": "",
+                "m": "",
+                "n": "",
+                "nominal_code_rate": "",
+                "col_weight": "",
+                "max_iter": "",
+            }
+        return codec.metadata()
+
+    return {
+        "coding_family": coding_mode,
+        "decoder_type": "unknown",
+        "soft_llr_decoder": False,
+        "standard_ldpc_bp": False,
+        "k": "",
+        "m": "",
+        "n": "",
+        "nominal_code_rate": "",
+        "col_weight": "",
+        "max_iter": "",
+    }
+    
+    
 def transmit_bits_by_mode(
     bits,
     coding_mode,
@@ -178,6 +225,8 @@ def run_sg(
     codec,
     object_vocab_size,
     relation_vocab_size,
+    valid_object_ids,
+    valid_relation_ids,
 ):
     before_strict_list = []
     after_strict_list = []
@@ -252,6 +301,8 @@ def run_sg(
                 pkt,
                 object_vocab_size=object_vocab_size,
                 relation_vocab_size=relation_vocab_size,
+                valid_object_ids=valid_object_ids,
+                valid_relation_ids=valid_relation_ids,
             )
             for pkt in rx_packets
         ]
@@ -310,10 +361,22 @@ def run_sg(
 
     validation_summary = summarize_validation_results(validation_results_all)
 
+    coding_metadata = coding_metadata_for_mode(coding_mode, codec)
+    
     out = {
         "semantic_type": "sg",
         "ranking_method": method,
         "coding_mode": coding_mode,
+        "coding_family": coding_metadata.get("coding_family", "uncoded"),
+        "decoder_type": coding_metadata.get("decoder_type", "none"),
+        "soft_llr_decoder": coding_metadata.get("soft_llr_decoder", False),
+        "standard_ldpc_bp": coding_metadata.get("standard_ldpc_bp", False),
+        "ldpc_k": coding_metadata.get("k", ""),
+        "ldpc_m": coding_metadata.get("m", ""),
+        "ldpc_n": coding_metadata.get("n", ""),
+        "ldpc_nominal_code_rate": coding_metadata.get("nominal_code_rate", ""),
+        "ldpc_col_weight": coding_metadata.get("col_weight", ""),
+        "ldpc_max_iter": coding_metadata.get("max_iter", ""),        
         "channel": channel_type,
         "snr_db": snr_db,
         "n_top": n_top,
@@ -355,6 +418,7 @@ def run_bbox(
     bandwidth_hz,
     codec,
     object_vocab_size,
+    valid_object_ids,
 ):
     before_list = []
     after_list = []
@@ -425,6 +489,7 @@ def run_bbox(
             validate_bbox_packet(
                 pkt,
                 object_vocab_size=object_vocab_size,
+                valid_object_ids=valid_object_ids,
             )
             for pkt in rx_packets
         ]
@@ -474,11 +539,23 @@ def run_bbox(
         used_samples += 1
 
     validation_summary = summarize_validation_results(validation_results_all)
-
+    
+    coding_metadata = coding_metadata_for_mode(coding_mode, codec)
+    
     out = {
         "semantic_type": "bbox",
         "ranking_method": method,
         "coding_mode": coding_mode,
+        "coding_family": coding_metadata.get("coding_family", "uncoded"),
+        "decoder_type": coding_metadata.get("decoder_type", "none"),
+        "soft_llr_decoder": coding_metadata.get("soft_llr_decoder", False),
+        "standard_ldpc_bp": coding_metadata.get("standard_ldpc_bp", False),
+        "ldpc_k": coding_metadata.get("k", ""),
+        "ldpc_m": coding_metadata.get("m", ""),
+        "ldpc_n": coding_metadata.get("n", ""),
+        "ldpc_nominal_code_rate": coding_metadata.get("nominal_code_rate", ""),
+        "ldpc_col_weight": coding_metadata.get("col_weight", ""),
+        "ldpc_max_iter": coding_metadata.get("max_iter", ""),        
         "channel": channel_type,
         "snr_db": snr_db,
         "n_top": n_top,
@@ -521,7 +598,23 @@ def main() -> None:
     data_root = Path(cfg["data"]["root"])
     ds = GQACommSubset(data_root)
 
-    object_vocab_size, relation_vocab_size = get_vocab_sizes(cfg, data_root)
+    vocab_info = get_vocab_info(cfg, data_root)
+    object_vocab_size = vocab_info["object_vocab_size"]
+    relation_vocab_size = vocab_info["relation_vocab_size"]
+    valid_object_ids = vocab_info["valid_object_ids"]
+    valid_relation_ids = vocab_info["valid_relation_ids"]
+
+    print(
+        "Vocab ID ranges:",
+        {
+            "object_vocab_size": object_vocab_size,
+            "relation_vocab_size": relation_vocab_size,
+            "min_object_id": vocab_info["min_object_id"],
+            "max_object_id": vocab_info["max_object_id"],
+            "min_relation_id": vocab_info["min_relation_id"],
+            "max_relation_id": vocab_info["max_relation_id"],
+        },
+    )
 
     samples = ds.load_samples(limit=max_samples)
     sample_by_qid = {s["question_id"]: s for s in samples}
@@ -566,6 +659,8 @@ def main() -> None:
                             codec=codec,
                             object_vocab_size=object_vocab_size,
                             relation_vocab_size=relation_vocab_size,
+                            valid_object_ids=valid_object_ids,
+                            valid_relation_ids=valid_relation_ids,
                         )
                         out_rows.append(sg_row)
                         print(sg_row)
@@ -584,6 +679,7 @@ def main() -> None:
                             bandwidth_hz=bandwidth_hz,
                             codec=codec,
                             object_vocab_size=object_vocab_size,
+                            valid_object_ids=valid_object_ids,
                         )
                         out_rows.append(bbox_row)
                         print(bbox_row)

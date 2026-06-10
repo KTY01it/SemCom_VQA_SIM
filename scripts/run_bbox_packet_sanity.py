@@ -23,6 +23,7 @@ from src.semantic.packet_codec import (
 from src.semantic.packet_validation import (
     summarize_validation_results,
     validate_bbox_packet,
+    vocab_to_valid_id_set,
 )
 from src.utils.config import load_yaml
 
@@ -50,10 +51,21 @@ def load_json(path: Path):
         return json.load(f)
 
 
-def get_object_vocab_size(cfg, data_root: Path) -> int:
-    vocab_name = cfg["data"].get("object_vocab", "object_vocab.json")
-    object_vocab = load_json(data_root / vocab_name)
-    return len(object_vocab)
+def get_object_vocab_info(cfg, data_root: Path) -> dict:
+    object_vocab_name = cfg["data"].get(
+        "object_vocab_file",
+        cfg["data"].get("object_vocab", "object_vocab.json"),
+    )
+
+    object_vocab = load_json(data_root / object_vocab_name)
+    valid_object_ids = vocab_to_valid_id_set(object_vocab)
+
+    return {
+        "object_vocab_size": len(object_vocab),
+        "valid_object_ids": valid_object_ids,
+        "min_object_id": min(valid_object_ids) if valid_object_ids else None,
+        "max_object_id": max(valid_object_ids) if valid_object_ids else None,
+    }
 
 
 def mean_or_zero(values):
@@ -91,7 +103,19 @@ def main() -> None:
     ds = GQACommSubset(data_root)
     rows_raw = ds.load_bbox_packets(limit=max_samples)
 
-    object_vocab_size = get_object_vocab_size(cfg, data_root)
+    object_vocab_info = get_object_vocab_info(cfg, data_root)
+
+    object_vocab_size = object_vocab_info["object_vocab_size"]
+    valid_object_ids = object_vocab_info["valid_object_ids"]
+
+    print(
+        "Object vocab ID range:",
+        {
+            "object_vocab_size": object_vocab_size,
+            "min_object_id": object_vocab_info["min_object_id"],
+            "max_object_id": object_vocab_info["max_object_id"],
+        },
+    )
 
     out_rows = []
 
@@ -146,6 +170,7 @@ def main() -> None:
                     validate_bbox_packet(
                         pkt,
                         object_vocab_size=object_vocab_size,
+                        valid_object_ids=valid_object_ids,
                     )
                     for pkt in rx_packets
                 ]

@@ -85,7 +85,19 @@ def main() -> None:
         sections.append(csv_brief(RESULTS_DIR / name))
         sections.append("")
 
-    sections.append("## 4. Current Known Limitations")
+    proxy_contract_path = Path("results/proxy_metric_contract.json")
+    if proxy_contract_path.exists():
+        sections.append("## 4. Proxy Metric Contract")
+        sections.append("")
+        sections.append("- Primary metric: `validated_answer_related_semantic_coverage`.")
+        sections.append("- Short name: `validated proxy answerability`.")
+        sections.append("- Claim boundary: this measures delivered answer-related semantic evidence after packet validation and invalid-packet drop; it is not full VQA accuracy.")
+        sections.append("- SG strict: answer token must appear in a delivered valid triplet and overlap with question keywords.")
+        sections.append("- SG loose: answer token must appear in any delivered valid triplet.")
+        sections.append("- BBox: answer token must appear in a delivered valid object label or attribute.")
+        sections.append("")
+        
+    sections.append("## 5. Current Known Limitations")
     sections.append("- `answerability` is a validated proxy metric, not full VQA accuracy.")
     sections.append("- Current coding is LDPC-like sparse systematic block coding, not yet standard LDPC BP/min-sum with soft LLR.")
     sections.append("- Image Transmission baseline is a raw-float32 image-size baseline, not JPEG-compressed image transmission.")
