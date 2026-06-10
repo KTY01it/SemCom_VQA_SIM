@@ -95,6 +95,7 @@ def main() -> None:
         sections.append("- SG strict: answer token must appear in a delivered valid triplet and overlap with question keywords.")
         sections.append("- SG loose: answer token must appear in any delivered valid triplet.")
         sections.append("- BBox: answer token must appear in a delivered valid object label or attribute.")
+        sections.append("- Channel outputs expose SNR, signal/noise power, Rayleigh gain-power statistics, and LLR-ready metadata; reported decoding remains hard-decision unless a soft decoder is explicitly enabled.")
         sections.append("")
         
     sections.append("## 5. Current Known Limitations")

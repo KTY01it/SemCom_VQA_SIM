@@ -5,6 +5,7 @@ from typing import Any, Dict, List
 
 from src.comm.bpsk import bpsk_demodulate_hard, bpsk_modulate
 from src.comm.channel import awgn_channel, rayleigh_channel
+from src.comm.transmission import transmit_uncoded_bits
 from src.comm.latency import communication_latency_sec
 from src.data.gqa_subset import GQACommSubset
 from src.eval.answerability import (
@@ -165,6 +166,52 @@ def mean_or_zero(values):
     return sum(values) / len(values) if values else 0.0
 
 
+CHANNEL_METADATA_KEYS = [
+    "demod_type",
+    "soft_llr_available",
+    "llr_mean_abs",
+    "channel_snr_linear",
+    "channel_signal_power",
+    "channel_noise_power",
+    "channel_noise_variance_mean",
+    "channel_gain_power_mean",
+]
+
+
+def init_channel_metadata_lists() -> dict:
+    return {key: [] for key in CHANNEL_METADATA_KEYS}
+
+
+def append_channel_metadata(metadata_lists: dict, stats: dict) -> None:
+    for key in CHANNEL_METADATA_KEYS:
+        if key not in stats:
+            continue
+
+        value = stats[key]
+
+        # demod_type is a string; keep the first observed value later.
+        if isinstance(value, str):
+            metadata_lists[key].append(value)
+        else:
+            metadata_lists[key].append(float(value))
+
+
+def summarize_channel_metadata(metadata_lists: dict) -> dict:
+    out = {}
+
+    for key, values in metadata_lists.items():
+        if not values:
+            out[key] = ""
+            continue
+
+        if isinstance(values[0], str):
+            out[key] = values[0]
+        else:
+            out[key] = mean_or_zero(values)
+
+    return out
+
+
 def write_csv_union_fieldnames(output_path: Path, rows: list[dict]) -> None:
     fieldnames = []
     seen = set()
@@ -245,6 +292,8 @@ def run_sg_answerability(
     latency_list = []
     bit_list = []
 
+    channel_metadata_lists = init_channel_metadata_lists()
+
     validation_results_all = []
 
     used_samples = 0
@@ -285,13 +334,15 @@ def run_sg_answerability(
         else:
             tx_bits = encode_sg_triplets(tx_packets)
 
-        rx_bits = transmit_bits(
-            tx_bits,
+        rx_bits, stats = transmit_uncoded_bits(
+            bits=tx_bits,
             channel_type=channel_type,
             snr_db=snr_db,
             seed=seed + sample_idx,
             perfect_csi=perfect_csi,
         )
+
+        append_channel_metadata(channel_metadata_lists, stats)
 
         if crc_cfg["crc16_enabled"]:
             rx_packets, crc_results = decode_sg_triplets_crc16(
@@ -411,7 +462,9 @@ def run_sg_answerability(
         "t_com_sec": mean_or_zero(latency_list),
     }
     out.update(validation_summary)
-
+    
+    out.update(summarize_channel_metadata(channel_metadata_lists))
+    
     return out
 
 
@@ -438,6 +491,8 @@ def run_bbox_answerability(
     per_list = []
     latency_list = []
     bit_list = []
+
+    channel_metadata_lists = init_channel_metadata_lists()
 
     validation_results_all = []
 
@@ -480,13 +535,15 @@ def run_bbox_answerability(
         else:
             tx_bits = encode_bboxes(tx_packets)
 
-        rx_bits = transmit_bits(
-            tx_bits,
+        rx_bits, stats = transmit_uncoded_bits(
+            bits=tx_bits,
             channel_type=channel_type,
             snr_db=snr_db,
             seed=seed + sample_idx,
             perfect_csi=perfect_csi,
         )
+
+        append_channel_metadata(channel_metadata_lists, stats)
 
         if crc_cfg["crc16_enabled"]:
             rx_packets, crc_results = decode_bboxes_crc16(
@@ -586,6 +643,8 @@ def run_bbox_answerability(
         "t_com_sec": mean_or_zero(latency_list),
     }
     out.update(validation_summary)
+
+    out.update(summarize_channel_metadata(channel_metadata_lists))
 
     return out
 

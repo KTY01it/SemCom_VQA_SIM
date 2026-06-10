@@ -4,9 +4,12 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from scripts.run_answerability_sweep import (
+    append_channel_metadata,
     combine_crc_and_semantic_validation,
     get_crc_config,
     get_vocab_info,
+    init_channel_metadata_lists,
+    summarize_channel_metadata,
 )
 from src.comm.latency import communication_latency_sec
 from src.comm.ldpc_codec import LDPCConfig, SystematicLDPC
@@ -258,6 +261,8 @@ def run_sg(
     source_latency_list = []
     coded_latency_list = []
 
+    channel_metadata_lists = init_channel_metadata_lists()
+
     validation_results_all = []
 
     used_samples = 0
@@ -306,6 +311,8 @@ def run_sg(
             perfect_csi=perfect_csi,
             codec=codec,
         )
+
+        append_channel_metadata(channel_metadata_lists, stats)
 
         if crc_cfg["crc16_enabled"]:
             rx_packets, crc_results = decode_sg_triplets_crc16(
@@ -438,6 +445,8 @@ def run_sg(
     }
     out.update(validation_summary)
 
+    out.update(summarize_channel_metadata(channel_metadata_lists))
+
     return out
 
 
@@ -470,6 +479,8 @@ def run_bbox(
     ldpc_success_list = []
     source_latency_list = []
     coded_latency_list = []
+
+    channel_metadata_lists = init_channel_metadata_lists()
 
     validation_results_all = []
 
@@ -520,6 +531,8 @@ def run_bbox(
             perfect_csi=perfect_csi,
             codec=codec,
         )
+
+        append_channel_metadata(channel_metadata_lists, stats)
 
         if crc_cfg["crc16_enabled"]:
             rx_packets, crc_results = decode_bboxes_crc16(
@@ -639,6 +652,8 @@ def run_bbox(
         "packet_total_bits": crc_cfg["bbox_packet_bits"],
     }
     out.update(validation_summary)
+
+    out.update(summarize_channel_metadata(channel_metadata_lists))
 
     return out
 

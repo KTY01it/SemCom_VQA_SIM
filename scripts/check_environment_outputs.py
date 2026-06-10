@@ -142,6 +142,14 @@ def main() -> None:
             "packet_payload_bits",
             "packet_crc_bits",
             "packet_total_bits",
+            "demod_type",
+            "soft_llr_available",
+            "llr_mean_abs",
+            "channel_snr_linear",
+            "channel_signal_power",
+            "channel_noise_power",
+            "channel_noise_variance_mean",
+            "channel_gain_power_mean",
         ],
     ) and ok
 
@@ -168,6 +176,15 @@ def main() -> None:
             "packet_payload_bits",
             "packet_crc_bits",
             "packet_total_bits",       
+            "demod_type",
+            "soft_llr_available",
+            "llr_mean_abs",
+            "channel_snr_linear",
+            "channel_signal_power",
+            "channel_noise_power",
+            "channel_noise_variance_mean",
+            "channel_gain_power_mean",
+            
         ],
     ) and ok
 
@@ -213,7 +230,8 @@ def main() -> None:
             "LDPC-like",
             "Proxy Metric Contract",
             "validated_answer_related_semantic_coverage",   
-            "CRC16 drop policy",         
+            "CRC16 drop policy",
+            "LLR-ready metadata",    
         ],
     ) and ok
 
