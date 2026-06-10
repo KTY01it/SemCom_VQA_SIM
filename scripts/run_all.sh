@@ -14,6 +14,11 @@ echo "============================================================"
 python scripts/test_packet_validation.py
 
 echo "============================================================"
+echo "[1b/9] Channel metadata unit test"
+echo "============================================================"
+python scripts/test_channel_metadata.py
+
+echo "============================================================"
 echo "[2/9] SG packet sanity"
 echo "============================================================"
 python scripts/run_sg_packet_sanity.py
@@ -42,6 +47,11 @@ echo "============================================================"
 echo "[7/9] Paper-style total latency breakdown"
 echo "============================================================"
 python scripts/run_total_latency_breakdown.py
+
+echo "============================================================"
+echo "[7b/9] Proxy metric contract"
+echo "============================================================"
+python scripts/export_proxy_metric_contract.py
 
 echo "============================================================"
 echo "[8/9] Summaries and figures"
