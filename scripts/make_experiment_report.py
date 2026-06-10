@@ -102,7 +102,7 @@ def main() -> None:
     sections.append("- Current coding is LDPC-like sparse systematic block coding, not yet standard LDPC BP/min-sum with soft LLR.")
     sections.append("- Image Transmission baseline is a raw-float32 image-size baseline, not JPEG-compressed image transmission.")
     sections.append("- Total latency uses paper-style FLOPs approximation, not measured runtime profiling.")
-    sections.append("- Packet validation currently covers vocab/range/geometry validation; CRC helper exists, but CRC is not yet integrated into all transmission sweeps.")
+    sections.append("- Packet validation includes CRC16 drop policy when `packet.crc16_enabled=true`, followed by vocab/range/geometry validation.")
     sections.append("")
 
     REPORT_PATH.write_text("\n".join(sections), encoding="utf-8")

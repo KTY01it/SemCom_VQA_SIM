@@ -138,6 +138,10 @@ def main() -> None:
             "answerability_after_loose_validated",
             "valid_packet_rate",
             "invalid_packet_rate",
+            "crc16_enabled",
+            "packet_payload_bits",
+            "packet_crc_bits",
+            "packet_total_bits",
         ],
     ) and ok
 
@@ -159,7 +163,11 @@ def main() -> None:
             "coding_family",
             "decoder_type",
             "soft_llr_decoder",
-            "standard_ldpc_bp",            
+            "standard_ldpc_bp",     
+            "crc16_enabled",
+            "packet_payload_bits",
+            "packet_crc_bits",
+            "packet_total_bits",       
         ],
     ) and ok
 
@@ -204,7 +212,8 @@ def main() -> None:
             "Paper-style total latency",
             "LDPC-like",
             "Proxy Metric Contract",
-            "validated_answer_related_semantic_coverage",            
+            "validated_answer_related_semantic_coverage",   
+            "CRC16 drop policy",         
         ],
     ) and ok
 

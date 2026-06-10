@@ -19,12 +19,20 @@ from src.eval.delivered_proxy import (
 )
 from src.eval.metrics import bit_error_rate, packet_error_rate
 from src.semantic.packet_codec import (
+    BBOX_PAYLOAD_BITS,
+    BBOX_TOTAL_BITS_CRC16,
+    SG_PAYLOAD_BITS,
+    SG_TOTAL_BITS_CRC16,
     BBoxPacket,
     SGTripletPacket,
     decode_bboxes,
+    decode_bboxes_crc16,
     decode_sg_triplets,
+    decode_sg_triplets_crc16,
     encode_bboxes,
+    encode_bboxes_crc16,
     encode_sg_triplets,
+    encode_sg_triplets_crc16,
 )
 from src.semantic.packet_validation import (
     summarize_validation_results,
@@ -118,6 +126,41 @@ def filter_valid_aligned(selected_units, tx_packets, rx_packets, validation_resu
     return selected_valid, tx_valid, rx_valid
 
 
+def combine_crc_and_semantic_validation(
+    crc_results,
+    semantic_results,
+):
+    """
+    CRC failure has priority.
+    If CRC fails, drop packet before vocab/geometry validation.
+    """
+    if crc_results is None:
+        return semantic_results
+
+    out = []
+    for crc_status, semantic_status in zip(crc_results, semantic_results):
+        if not crc_status.valid:
+            out.append(crc_status)
+        else:
+            out.append(semantic_status)
+
+    return out
+
+
+def get_crc_config(cfg) -> dict:
+    packet_cfg = cfg.get("packet", {})
+    crc16_enabled = bool(packet_cfg.get("crc16_enabled", False))
+
+    return {
+        "crc16_enabled": crc16_enabled,
+        "sg_payload_bits": int(packet_cfg.get("sg_payload_bits", SG_PAYLOAD_BITS)),
+        "bbox_payload_bits": int(packet_cfg.get("bbox_payload_bits", BBOX_PAYLOAD_BITS)),
+        "crc_bits": int(packet_cfg.get("crc_bits", 16)) if crc16_enabled else 0,
+        "sg_packet_bits": SG_TOTAL_BITS_CRC16 if crc16_enabled else SG_PAYLOAD_BITS,
+        "bbox_packet_bits": BBOX_TOTAL_BITS_CRC16 if crc16_enabled else BBOX_PAYLOAD_BITS,
+    }
+    
+
 def mean_or_zero(values):
     return sum(values) / len(values) if values else 0.0
 
@@ -187,6 +230,7 @@ def run_sg_answerability(
     relation_vocab_size,
     valid_object_ids,
     valid_relation_ids,
+    crc_cfg,    
 ):
     before_strict_list = []
     after_strict_list = []
@@ -236,7 +280,10 @@ def run_sg_answerability(
             for t in selected
         ]
 
-        tx_bits = encode_sg_triplets(tx_packets)
+        if crc_cfg["crc16_enabled"]:
+            tx_bits = encode_sg_triplets_crc16(tx_packets)
+        else:
+            tx_bits = encode_sg_triplets(tx_packets)
 
         rx_bits = transmit_bits(
             tx_bits,
@@ -246,10 +293,17 @@ def run_sg_answerability(
             perfect_csi=perfect_csi,
         )
 
-        rx_packets = decode_sg_triplets(
-            rx_bits,
-            num_triplets=len(tx_packets),
-        )
+        if crc_cfg["crc16_enabled"]:
+            rx_packets, crc_results = decode_sg_triplets_crc16(
+                rx_bits,
+                num_triplets=len(tx_packets),
+            )
+        else:
+            rx_packets = decode_sg_triplets(
+                rx_bits,
+                num_triplets=len(tx_packets),
+            )
+            crc_results = None
 
         validation_results = [
             validate_sg_packet(
@@ -261,6 +315,12 @@ def run_sg_answerability(
             )
             for pkt in rx_packets
         ]
+        
+        validation_results = combine_crc_and_semantic_validation(
+            crc_results=crc_results,
+            semantic_results=validation_results,
+        )   
+        
         validation_results_all.extend(validation_results)
 
         selected_valid, tx_packets_valid, rx_packets_valid = filter_valid_aligned(
@@ -303,7 +363,13 @@ def run_sg_answerability(
         after_loose_validated_list.append(after_loose_validated)
 
         ber_list.append(bit_error_rate(tx_bits, rx_bits))
-        per_list.append(packet_error_rate(tx_bits, rx_bits, packet_size_bits=48))
+        per_list.append(
+            packet_error_rate(
+                tx_bits,
+                rx_bits,
+                packet_size_bits=crc_cfg["sg_packet_bits"],
+            )
+        )
         latency_list.append(
             communication_latency_sec(
                 num_bits=len(tx_bits),
@@ -325,7 +391,11 @@ def run_sg_answerability(
         "n_top": n_top,
         "num_samples": used_samples,
         "avg_source_bits": mean_or_zero(bit_list),
-        "avg_num_units": mean_or_zero(bit_list) / 48.0,
+        "avg_num_units": mean_or_zero(bit_list) / float(crc_cfg["sg_packet_bits"]),
+        "crc16_enabled": crc_cfg["crc16_enabled"],
+        "packet_payload_bits": crc_cfg["sg_payload_bits"],
+        "packet_crc_bits": crc_cfg["crc_bits"],
+        "packet_total_bits": crc_cfg["sg_packet_bits"],
         "ber": mean_or_zero(ber_list),
         "packet_error_rate": mean_or_zero(per_list),
         "answerability_before_strict": mean_or_zero(before_strict_list),
@@ -358,6 +428,7 @@ def run_bbox_answerability(
     bandwidth_hz,
     object_vocab_size,
     valid_object_ids,
+    crc_cfg,    
 ):
     before_list = []
     after_list = []
@@ -404,7 +475,10 @@ def run_bbox_answerability(
             for b in selected
         ]
 
-        tx_bits = encode_bboxes(tx_packets)
+        if crc_cfg["crc16_enabled"]:
+            tx_bits = encode_bboxes_crc16(tx_packets)
+        else:
+            tx_bits = encode_bboxes(tx_packets)
 
         rx_bits = transmit_bits(
             tx_bits,
@@ -414,10 +488,17 @@ def run_bbox_answerability(
             perfect_csi=perfect_csi,
         )
 
-        rx_packets = decode_bboxes(
-            rx_bits,
-            num_bboxes=len(tx_packets),
-        )
+        if crc_cfg["crc16_enabled"]:
+            rx_packets, crc_results = decode_bboxes_crc16(
+                rx_bits,
+                num_bboxes=len(tx_packets),
+            )
+        else:
+            rx_packets = decode_bboxes(
+                rx_bits,
+                num_bboxes=len(tx_packets),
+            )
+            crc_results = None
 
         validation_results = [
             validate_bbox_packet(
@@ -427,6 +508,10 @@ def run_bbox_answerability(
             )
             for pkt in rx_packets
         ]
+        validation_results = combine_crc_and_semantic_validation(
+            crc_results=crc_results,
+            semantic_results=validation_results,
+        )        
         validation_results_all.extend(validation_results)
 
         selected_valid, tx_packets_valid, rx_packets_valid = filter_valid_aligned(
@@ -457,7 +542,13 @@ def run_bbox_answerability(
         after_validated_list.append(after_validated)
 
         ber_list.append(bit_error_rate(tx_bits, rx_bits))
-        per_list.append(packet_error_rate(tx_bits, rx_bits, packet_size_bits=80))
+        per_list.append(
+            packet_error_rate(
+                tx_bits,
+                rx_bits,
+                packet_size_bits=crc_cfg["bbox_packet_bits"],
+            )
+        )
         latency_list.append(
             communication_latency_sec(
                 num_bits=len(tx_bits),
@@ -479,7 +570,11 @@ def run_bbox_answerability(
         "n_top": n_top,
         "num_samples": used_samples,
         "avg_source_bits": mean_or_zero(bit_list),
-        "avg_num_units": mean_or_zero(bit_list) / 80.0,
+        "avg_num_units": mean_or_zero(bit_list) / float(crc_cfg["bbox_packet_bits"]),
+        "crc16_enabled": crc_cfg["crc16_enabled"],
+        "packet_payload_bits": crc_cfg["bbox_payload_bits"],
+        "packet_crc_bits": crc_cfg["crc_bits"],
+        "packet_total_bits": crc_cfg["bbox_packet_bits"],
         "ber": mean_or_zero(ber_list),
         "packet_error_rate": mean_or_zero(per_list),
         "answerability_before_strict": "",
@@ -501,12 +596,28 @@ def main() -> None:
     seed = int(cfg["project"]["seed"])
     perfect_csi = bool(cfg["channel"]["perfect_csi"])
     bandwidth_hz = float(cfg["latency"]["bandwidth_hz"])
+    
+    crc_cfg = get_crc_config(cfg)
+    print("Packet CRC config:", crc_cfg)
 
-    max_samples = 500
-    snr_db = 8.0
-    n_top_list = [3, 6, 9, 12, 15, 18]
-    ranking_methods = ["original", "do", "go"]
-    channels = ["awgn", "rayleigh"]
+    exp_cfg = cfg.get("experiment", {})
+
+    max_samples = int(exp_cfg.get("answerability_max_samples", 500))
+    snr_db = float(exp_cfg.get("answerability_snr_db", 8.0))
+    n_top_list = [int(x) for x in exp_cfg.get("n_top_list", [3, 6, 9, 12, 15, 18])]
+    ranking_methods = list(exp_cfg.get("ranking_methods", ["original", "do", "go"]))
+    channels = list(exp_cfg.get("channels", ["awgn", "rayleigh"]))
+
+    print(
+        "Answerability sweep config:",
+        {
+            "max_samples": max_samples,
+            "snr_db": snr_db,
+            "n_top_list": n_top_list,
+            "ranking_methods": ranking_methods,
+            "channels": channels,
+        },
+    )
 
     data_root = Path(cfg["data"]["root"])
     ds = GQACommSubset(data_root)
@@ -560,6 +671,7 @@ def main() -> None:
                     relation_vocab_size=relation_vocab_size,
                     valid_object_ids=valid_object_ids,
                     valid_relation_ids=valid_relation_ids,
+                    crc_cfg=crc_cfg,
                 )
                 out_rows.append(sg_row)
                 print(sg_row)
@@ -577,6 +689,7 @@ def main() -> None:
                     bandwidth_hz=bandwidth_hz,
                     object_vocab_size=object_vocab_size,
                     valid_object_ids=valid_object_ids,
+                    crc_cfg=crc_cfg,
                 )
                 out_rows.append(bbox_row)
                 print(bbox_row)

@@ -23,6 +23,12 @@ source:
   num_bits: 4096
   packet_size_bits: 512
 
+packet:
+  crc16_enabled: true
+  crc_bits: 16
+  sg_payload_bits: 48
+  bbox_payload_bits: 80
+
 modulation:
   scheme: bpsk
   bit0_symbol: -1.0
@@ -48,11 +54,58 @@ latency:
   ranking_ms: 0.1
   channel_decode_ms: 0.0
 
+experiment:
+  answerability_max_samples: 500
+  answerability_snr_db: 8.0
+  ldpc_max_samples: 300
+
+  channels:
+    - awgn
+    - rayleigh
+
+  ranking_methods:
+    - original
+    - do
+    - go
+
+  ldpc_ranking_methods:
+    - go
+
+  n_top_list:
+    - 3
+    - 6
+    - 9
+    - 12
+    - 15
+    - 18
+
+  ldpc_n_top_list:
+    - 3
+    - 6
+    - 9
+    - 12
+
+  ldpc_snr_db_list:
+    - 4.0
+    - 6.0
+    - 8.0
+    - 10.0
+    - 12.0
+
+  coding_modes:
+    - uncoded
+    - ldpc_like
+
 ldpc:
   enabled: false
   code_rate: 0.5
   block_length: 1024
-  max_iter: 50
+
+  k: 256
+  m: 256
+  col_weight: 3
+  max_iter: 30
+  seed: 123
 
 output:
   dir: results

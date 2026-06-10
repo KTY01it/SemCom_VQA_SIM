@@ -3,7 +3,11 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List
 
-from scripts.run_answerability_sweep import get_vocab_info
+from scripts.run_answerability_sweep import (
+    combine_crc_and_semantic_validation,
+    get_crc_config,
+    get_vocab_info,
+)
 from src.comm.latency import communication_latency_sec
 from src.comm.ldpc_codec import LDPCConfig, SystematicLDPC
 from src.comm.transmission import transmit_ldpc_bits, transmit_uncoded_bits
@@ -20,12 +24,20 @@ from src.eval.delivered_proxy import (
 )
 from src.eval.metrics import packet_error_rate
 from src.semantic.packet_codec import (
+    BBOX_PAYLOAD_BITS,
+    BBOX_TOTAL_BITS_CRC16,
+    SG_PAYLOAD_BITS,
+    SG_TOTAL_BITS_CRC16,
     BBoxPacket,
     SGTripletPacket,
     decode_bboxes,
+    decode_bboxes_crc16,
     decode_sg_triplets,
+    decode_sg_triplets_crc16,
     encode_bboxes,
+    encode_bboxes_crc16,
     encode_sg_triplets,
+    encode_sg_triplets_crc16,
 )
 from src.semantic.packet_validation import (
     summarize_validation_results,
@@ -227,6 +239,7 @@ def run_sg(
     relation_vocab_size,
     valid_object_ids,
     valid_relation_ids,
+    crc_cfg,    
 ):
     before_strict_list = []
     after_strict_list = []
@@ -279,7 +292,10 @@ def run_sg(
             for t in selected
         ]
 
-        tx_bits = encode_sg_triplets(tx_packets)
+        if crc_cfg["crc16_enabled"]:
+            tx_bits = encode_sg_triplets_crc16(tx_packets)
+        else:
+            tx_bits = encode_sg_triplets(tx_packets)
 
         rx_bits, stats = transmit_bits_by_mode(
             bits=tx_bits,
@@ -291,10 +307,17 @@ def run_sg(
             codec=codec,
         )
 
-        rx_packets = decode_sg_triplets(
-            rx_bits,
-            num_triplets=len(tx_packets),
-        )
+        if crc_cfg["crc16_enabled"]:
+            rx_packets, crc_results = decode_sg_triplets_crc16(
+                rx_bits,
+                num_triplets=len(tx_packets),
+            )
+        else:
+            rx_packets = decode_sg_triplets(
+                rx_bits,
+                num_triplets=len(tx_packets),
+            )
+            crc_results = None
 
         validation_results = [
             validate_sg_packet(
@@ -306,6 +329,10 @@ def run_sg(
             )
             for pkt in rx_packets
         ]
+        validation_results = combine_crc_and_semantic_validation(
+            crc_results=crc_results,
+            semantic_results=validation_results,
+        )        
         validation_results_all.extend(validation_results)
 
         selected_valid, tx_packets_valid, rx_packets_valid = filter_valid_aligned(
@@ -348,7 +375,13 @@ def run_sg(
         decoded_ber_list.append(stats["decoded_ber"])
         ldpc_success_list.append(stats["ldpc_block_success_rate"])
 
-        per_list.append(packet_error_rate(tx_bits, rx_bits, packet_size_bits=48))
+        per_list.append(
+            packet_error_rate(
+                tx_bits,
+                rx_bits,
+                packet_size_bits=crc_cfg["sg_packet_bits"],
+            )
+        )
 
         source_latency_list.append(
             communication_latency_sec(source_bits, bandwidth_hz, snr_db)
@@ -398,6 +431,10 @@ def run_sg(
         "answerability_after_loose_validated": mean_or_zero(after_loose_validated_list),
         "source_t_com_sec": mean_or_zero(source_latency_list),
         "coded_t_com_sec": mean_or_zero(coded_latency_list),
+        "crc16_enabled": crc_cfg["crc16_enabled"],
+        "packet_payload_bits": crc_cfg["sg_payload_bits"],
+        "packet_crc_bits": crc_cfg["crc_bits"],
+        "packet_total_bits": crc_cfg["sg_packet_bits"],
     }
     out.update(validation_summary)
 
@@ -419,6 +456,7 @@ def run_bbox(
     codec,
     object_vocab_size,
     valid_object_ids,
+    crc_cfg,    
 ):
     before_list = []
     after_list = []
@@ -468,7 +506,10 @@ def run_bbox(
             for b in selected
         ]
 
-        tx_bits = encode_bboxes(tx_packets)
+        if crc_cfg["crc16_enabled"]:
+            tx_bits = encode_bboxes_crc16(tx_packets)
+        else:
+            tx_bits = encode_bboxes(tx_packets)
 
         rx_bits, stats = transmit_bits_by_mode(
             bits=tx_bits,
@@ -480,10 +521,17 @@ def run_bbox(
             codec=codec,
         )
 
-        rx_packets = decode_bboxes(
-            rx_bits,
-            num_bboxes=len(tx_packets),
-        )
+        if crc_cfg["crc16_enabled"]:
+            rx_packets, crc_results = decode_bboxes_crc16(
+                rx_bits,
+                num_bboxes=len(tx_packets),
+            )
+        else:
+            rx_packets = decode_bboxes(
+                rx_bits,
+                num_bboxes=len(tx_packets),
+            )
+            crc_results = None
 
         validation_results = [
             validate_bbox_packet(
@@ -493,6 +541,10 @@ def run_bbox(
             )
             for pkt in rx_packets
         ]
+        validation_results = combine_crc_and_semantic_validation(
+            crc_results=crc_results,
+            semantic_results=validation_results,
+        )        
         validation_results_all.extend(validation_results)
 
         selected_valid, tx_packets_valid, rx_packets_valid = filter_valid_aligned(
@@ -527,7 +579,13 @@ def run_bbox(
         decoded_ber_list.append(stats["decoded_ber"])
         ldpc_success_list.append(stats["ldpc_block_success_rate"])
 
-        per_list.append(packet_error_rate(tx_bits, rx_bits, packet_size_bits=80))
+        per_list.append(
+            packet_error_rate(
+                tx_bits,
+                rx_bits,
+                packet_size_bits=crc_cfg["bbox_packet_bits"],
+            )
+        )
 
         source_latency_list.append(
             communication_latency_sec(source_bits, bandwidth_hz, snr_db)
@@ -575,6 +633,10 @@ def run_bbox(
         "answerability_after_loose_validated": mean_or_zero(after_validated_list),
         "source_t_com_sec": mean_or_zero(source_latency_list),
         "coded_t_com_sec": mean_or_zero(coded_latency_list),
+        "crc16_enabled": crc_cfg["crc16_enabled"],
+        "packet_payload_bits": crc_cfg["bbox_payload_bits"],
+        "packet_crc_bits": crc_cfg["crc_bits"],
+        "packet_total_bits": crc_cfg["bbox_packet_bits"],
     }
     out.update(validation_summary)
 
@@ -587,13 +649,33 @@ def main() -> None:
     seed = int(cfg["project"]["seed"])
     perfect_csi = bool(cfg["channel"]["perfect_csi"])
     bandwidth_hz = float(cfg["latency"]["bandwidth_hz"])
+    
+    crc_cfg = get_crc_config(cfg)
+    print("Packet CRC config:", crc_cfg)
 
-    max_samples = 300
-    snr_db_list = [4.0, 6.0, 8.0, 10.0, 12.0]
-    n_top_list = [3, 6, 9, 12]
-    ranking_methods = ["go"]
-    channels = ["awgn", "rayleigh"]
-    coding_modes = ["uncoded", "ldpc_like"]
+    exp_cfg = cfg.get("experiment", {})
+
+    max_samples = int(exp_cfg.get("ldpc_max_samples", 300))
+    snr_db_list = [
+        float(x)
+        for x in exp_cfg.get("ldpc_snr_db_list", [4.0, 6.0, 8.0, 10.0, 12.0])
+    ]
+    n_top_list = [int(x) for x in exp_cfg.get("ldpc_n_top_list", [3, 6, 9, 12])]
+    ranking_methods = list(exp_cfg.get("ldpc_ranking_methods", ["go"]))
+    channels = list(exp_cfg.get("channels", ["awgn", "rayleigh"]))
+    coding_modes = list(exp_cfg.get("coding_modes", ["uncoded", "ldpc_like"]))
+
+    print(
+        "LDPC answerability sweep config:",
+        {
+            "max_samples": max_samples,
+            "snr_db_list": snr_db_list,
+            "n_top_list": n_top_list,
+            "ranking_methods": ranking_methods,
+            "channels": channels,
+            "coding_modes": coding_modes,
+        },
+    )
 
     data_root = Path(cfg["data"]["root"])
     ds = GQACommSubset(data_root)
@@ -626,14 +708,28 @@ def main() -> None:
     object_freq = build_object_frequency(all_samples_for_freq)
     relation_freq = build_relation_frequency(all_samples_for_freq)
 
+    ldpc_cfg = cfg.get("ldpc", {})
+
     codec = SystematicLDPC(
         LDPCConfig(
-            k=256,
-            m=256,
-            col_weight=3,
-            max_iter=30,
-            seed=123,
+            k=int(ldpc_cfg.get("k", 256)),
+            m=int(ldpc_cfg.get("m", 256)),
+            col_weight=int(ldpc_cfg.get("col_weight", 3)),
+            max_iter=int(ldpc_cfg.get("max_iter", 30)),
+            seed=int(ldpc_cfg.get("seed", 123)),
         )
+    )
+
+    print(
+        "LDPC-like codec config:",
+        {
+            "k": codec.k,
+            "m": codec.m,
+            "n": codec.n,
+            "col_weight": int(ldpc_cfg.get("col_weight", 3)),
+            "max_iter": int(ldpc_cfg.get("max_iter", 30)),
+            "seed": int(ldpc_cfg.get("seed", 123)),
+        },
     )
 
     out_rows = []
@@ -661,6 +757,7 @@ def main() -> None:
                             relation_vocab_size=relation_vocab_size,
                             valid_object_ids=valid_object_ids,
                             valid_relation_ids=valid_relation_ids,
+                            crc_cfg=crc_cfg,
                         )
                         out_rows.append(sg_row)
                         print(sg_row)
@@ -680,6 +777,7 @@ def main() -> None:
                             codec=codec,
                             object_vocab_size=object_vocab_size,
                             valid_object_ids=valid_object_ids,
+                            crc_cfg=crc_cfg,
                         )
                         out_rows.append(bbox_row)
                         print(bbox_row)

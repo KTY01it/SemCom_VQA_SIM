@@ -2,6 +2,10 @@ import csv
 import json
 from pathlib import Path
 
+from scripts.run_answerability_sweep import (
+    combine_crc_and_semantic_validation,
+    get_crc_config,
+)
 from src.comm.bpsk import bpsk_demodulate_hard, bpsk_modulate
 from src.comm.channel import awgn_channel, rayleigh_channel
 from src.comm.latency import communication_latency_sec
@@ -14,9 +18,13 @@ from src.eval.semantic_metrics import (
     sg_triplet_exact_match_rate_with_drop,
 )
 from src.semantic.packet_codec import (
+    SG_PAYLOAD_BITS,
+    SG_TOTAL_BITS_CRC16,
     SGTripletPacket,
     decode_sg_triplets,
+    decode_sg_triplets_crc16,
     encode_sg_triplets,
+    encode_sg_triplets_crc16,
 )
 from src.semantic.packet_validation import (
     summarize_validation_results,
@@ -105,6 +113,9 @@ def main() -> None:
     perfect_csi = bool(cfg["channel"]["perfect_csi"])
     bandwidth_hz = float(cfg["latency"]["bandwidth_hz"])
 
+    crc_cfg = get_crc_config(cfg)
+    print("Packet CRC config:", crc_cfg)
+
     n_top = 9
     max_samples = 100
 
@@ -161,7 +172,10 @@ def main() -> None:
                     for t in triplets
                 ]
 
-                tx_bits = encode_sg_triplets(tx_packets)
+                if crc_cfg["crc16_enabled"]:
+                    tx_bits = encode_sg_triplets_crc16(tx_packets)
+                else:
+                    tx_bits = encode_sg_triplets(tx_packets)
 
                 rx_bits = transmit_bits(
                     bits=tx_bits,
@@ -171,11 +185,18 @@ def main() -> None:
                     perfect_csi=perfect_csi,
                 )
 
-                rx_packets = decode_sg_triplets(
-                    rx_bits,
-                    num_triplets=len(tx_packets),
-                )
-
+                if crc_cfg["crc16_enabled"]:
+                    rx_packets, crc_results = decode_sg_triplets_crc16(
+                        rx_bits,
+                        num_triplets=len(tx_packets),
+                    )
+                else:
+                    rx_packets = decode_sg_triplets(
+                        rx_bits,
+                        num_triplets=len(tx_packets),
+                    )
+                    crc_results = None
+                    
                 validation_results = [
                     validate_sg_packet(
                         pkt,
@@ -186,6 +207,10 @@ def main() -> None:
                     )
                     for pkt in rx_packets
                 ]
+                validation_results = combine_crc_and_semantic_validation(
+                    crc_results=crc_results,
+                    semantic_results=validation_results,
+                )
                 validation_results_all.extend(validation_results)
 
                 rx_packets_validated = [
@@ -194,7 +219,7 @@ def main() -> None:
                 ]
 
                 ber = bit_error_rate(tx_bits, rx_bits)
-                per = packet_error_rate(tx_bits, rx_bits, packet_size_bits=48)
+                per = packet_error_rate(tx_bits, rx_bits, packet_size_bits=crc_cfg["sg_packet_bits"])
                 triplet_match = sg_triplet_exact_match_rate(tx_packets, rx_packets)
                 field_acc = sg_field_accuracy(tx_packets, rx_packets)
                 triplet_match_validated = sg_triplet_exact_match_rate_with_drop(
@@ -235,6 +260,10 @@ def main() -> None:
                 "sg_triplet_exact_match_validated": mean_or_zero(triplet_match_validated_list),
                 "sg_field_accuracy_validated": mean_or_zero(field_acc_validated_list),
                 "t_com_sec": mean_or_zero(latency_list),
+                "crc16_enabled": crc_cfg["crc16_enabled"],
+                "packet_payload_bits": crc_cfg["sg_payload_bits"],
+                "packet_crc_bits": crc_cfg["crc_bits"],
+                "packet_total_bits": crc_cfg["sg_packet_bits"],
             }
             out.update(validation_summary)
 

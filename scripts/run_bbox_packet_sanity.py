@@ -19,12 +19,22 @@ from src.semantic.packet_codec import (
     BBoxPacket,
     decode_bboxes,
     encode_bboxes,
+    BBOX_PAYLOAD_BITS,
+    BBOX_TOTAL_BITS_CRC16,
+    decode_bboxes_crc16,
+    encode_bboxes_crc16,
 )
 from src.semantic.packet_validation import (
     summarize_validation_results,
     validate_bbox_packet,
     vocab_to_valid_id_set,
 )
+
+from scripts.run_answerability_sweep import (
+    combine_crc_and_semantic_validation,
+    get_crc_config,
+)
+
 from src.utils.config import load_yaml
 
 
@@ -96,6 +106,9 @@ def main() -> None:
     perfect_csi = bool(cfg["channel"]["perfect_csi"])
     bandwidth_hz = float(cfg["latency"]["bandwidth_hz"])
 
+    crc_cfg = get_crc_config(cfg)
+    print("Packet CRC config:", crc_cfg)
+
     n_top = 9
     max_samples = 100
 
@@ -151,7 +164,10 @@ def main() -> None:
                     for b in bboxes
                 ]
 
-                tx_bits = encode_bboxes(tx_packets)
+                if crc_cfg["crc16_enabled"]:
+                    tx_bits = encode_bboxes_crc16(tx_packets)
+                else:
+                    tx_bits = encode_bboxes(tx_packets)
 
                 rx_bits = transmit_bits(
                     bits=tx_bits,
@@ -161,10 +177,17 @@ def main() -> None:
                     perfect_csi=perfect_csi,
                 )
 
-                rx_packets = decode_bboxes(
-                    rx_bits,
-                    num_bboxes=len(tx_packets),
-                )
+                if crc_cfg["crc16_enabled"]:
+                    rx_packets, crc_results = decode_bboxes_crc16(
+                        rx_bits,
+                        num_bboxes=len(tx_packets),
+                    )
+                else:
+                    rx_packets = decode_bboxes(
+                        rx_bits,
+                        num_bboxes=len(tx_packets),
+                    )
+                    crc_results = None
 
                 validation_results = [
                     validate_bbox_packet(
@@ -174,6 +197,10 @@ def main() -> None:
                     )
                     for pkt in rx_packets
                 ]
+                validation_results = combine_crc_and_semantic_validation(
+                    crc_results=crc_results,
+                    semantic_results=validation_results,
+                )
                 validation_results_all.extend(validation_results)
                 rx_packets_validated = [
                     pkt if status.valid else None
@@ -181,7 +208,7 @@ def main() -> None:
                 ]
                 
                 ber = bit_error_rate(tx_bits, rx_bits)
-                per = packet_error_rate(tx_bits, rx_bits, packet_size_bits=80)
+                per = packet_error_rate(tx_bits, rx_bits, packet_size_bits=crc_cfg["bbox_packet_bits"])
                 object_acc = bbox_object_accuracy(tx_packets, rx_packets)
                 bbox_l1 = bbox_mean_l1_error(tx_packets, rx_packets)
                 bbox_exact = bbox_exact_match_rate(tx_packets, rx_packets)
@@ -233,6 +260,10 @@ def main() -> None:
                 "bbox_mean_l1_error_validated": mean_or_zero(bbox_l1_validated_list),
                 "bbox_exact_match_validated": mean_or_zero(bbox_exact_validated_list),
                 "t_com_sec": mean_or_zero(latency_list),
+                "crc16_enabled": crc_cfg["crc16_enabled"],
+                "packet_payload_bits": crc_cfg["bbox_payload_bits"],
+                "packet_crc_bits": crc_cfg["crc_bits"],
+                "packet_total_bits": crc_cfg["bbox_packet_bits"],
             }
             
             out.update(validation_summary)

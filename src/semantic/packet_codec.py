@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from typing import Iterable, List
 
 import numpy as np
-
+from src.semantic.packet_validation import add_crc16, check_crc16, PacketValidationResult
 
 def bytes_to_bits(data: bytes) -> np.ndarray:
     return np.unpackbits(np.frombuffer(data, dtype=np.uint8))
@@ -25,6 +25,13 @@ class SGTripletPacket:
     relation_id: int
     object_id: int
 
+SG_PAYLOAD_BITS = 48
+SG_CRC_BITS = 16
+SG_TOTAL_BITS_CRC16 = SG_PAYLOAD_BITS + SG_CRC_BITS
+
+BBOX_PAYLOAD_BITS = 80
+BBOX_CRC_BITS = 16
+BBOX_TOTAL_BITS_CRC16 = BBOX_PAYLOAD_BITS + BBOX_CRC_BITS
 
 def encode_sg_triplet(packet: SGTripletPacket) -> np.ndarray:
     """
@@ -97,6 +104,63 @@ def decode_sg_triplets(bits: np.ndarray, num_triplets: int) -> List[SGTripletPac
         packets.append(decode_sg_triplet(bits[start:end]))
 
     return packets
+
+def encode_sg_triplet_crc16(packet: SGTripletPacket) -> np.ndarray:
+    payload_bits = encode_sg_triplet(packet)
+    return add_crc16(payload_bits)
+
+
+def decode_sg_triplet_crc16(bits: np.ndarray) -> tuple[SGTripletPacket, PacketValidationResult]:
+    bits = np.asarray(bits, dtype=np.uint8)
+
+    if len(bits) < SG_TOTAL_BITS_CRC16:
+        raise ValueError(
+            f"CRC16 SG triplet requires at least {SG_TOTAL_BITS_CRC16} bits, got {len(bits)}"
+        )
+
+    payload_bits, crc_status = check_crc16(bits[:SG_TOTAL_BITS_CRC16])
+
+    # Decode payload even when CRC fails, so downstream arrays stay aligned.
+    packet = decode_sg_triplet(payload_bits[:SG_PAYLOAD_BITS])
+
+    return packet, crc_status
+
+
+def encode_sg_triplets_crc16(packets: Iterable[SGTripletPacket]) -> np.ndarray:
+    chunks: List[np.ndarray] = []
+
+    for packet in packets:
+        chunks.append(encode_sg_triplet_crc16(packet))
+
+    if not chunks:
+        return np.zeros(0, dtype=np.uint8)
+
+    return np.concatenate(chunks).astype(np.uint8)
+
+
+def decode_sg_triplets_crc16(
+    bits: np.ndarray,
+    num_triplets: int,
+) -> tuple[List[SGTripletPacket], list[PacketValidationResult]]:
+    bits = np.asarray(bits, dtype=np.uint8)
+
+    expected_bits = num_triplets * SG_TOTAL_BITS_CRC16
+    if len(bits) < expected_bits:
+        raise ValueError(
+            f"Not enough bits: expected {expected_bits}, got {len(bits)}"
+        )
+
+    packets = []
+    crc_results = []
+
+    for i in range(num_triplets):
+        start = i * SG_TOTAL_BITS_CRC16
+        end = start + SG_TOTAL_BITS_CRC16
+        packet, crc_status = decode_sg_triplet_crc16(bits[start:end])
+        packets.append(packet)
+        crc_results.append(crc_status)
+
+    return packets, crc_results
 
 @dataclass(frozen=True)
 class BBoxPacket:
@@ -201,3 +265,61 @@ def decode_bboxes(bits: np.ndarray, num_bboxes: int) -> List[BBoxPacket]:
         packets.append(decode_bbox(bits[start:end]))
 
     return packets
+
+
+def encode_bbox_crc16(packet: BBoxPacket) -> np.ndarray:
+    payload_bits = encode_bbox(packet)
+    return add_crc16(payload_bits)
+
+
+def decode_bbox_crc16(bits: np.ndarray) -> tuple[BBoxPacket, PacketValidationResult]:
+    bits = np.asarray(bits, dtype=np.uint8)
+
+    if len(bits) < BBOX_TOTAL_BITS_CRC16:
+        raise ValueError(
+            f"CRC16 BBox packet requires at least {BBOX_TOTAL_BITS_CRC16} bits, got {len(bits)}"
+        )
+
+    payload_bits, crc_status = check_crc16(bits[:BBOX_TOTAL_BITS_CRC16])
+
+    # Decode payload even when CRC fails, so downstream arrays stay aligned.
+    packet = decode_bbox(payload_bits[:BBOX_PAYLOAD_BITS])
+
+    return packet, crc_status
+
+
+def encode_bboxes_crc16(packets: Iterable[BBoxPacket]) -> np.ndarray:
+    chunks: List[np.ndarray] = []
+
+    for packet in packets:
+        chunks.append(encode_bbox_crc16(packet))
+
+    if not chunks:
+        return np.zeros(0, dtype=np.uint8)
+
+    return np.concatenate(chunks).astype(np.uint8)
+
+
+def decode_bboxes_crc16(
+    bits: np.ndarray,
+    num_bboxes: int,
+) -> tuple[List[BBoxPacket], list[PacketValidationResult]]:
+    bits = np.asarray(bits, dtype=np.uint8)
+
+    expected_bits = num_bboxes * BBOX_TOTAL_BITS_CRC16
+    if len(bits) < expected_bits:
+        raise ValueError(
+            f"Not enough bits: expected {expected_bits}, got {len(bits)}"
+        )
+
+    packets = []
+    crc_results = []
+
+    for i in range(num_bboxes):
+        start = i * BBOX_TOTAL_BITS_CRC16
+        end = start + BBOX_TOTAL_BITS_CRC16
+        packet, crc_status = decode_bbox_crc16(bits[start:end])
+        packets.append(packet)
+        crc_results.append(crc_status)
+
+    return packets, crc_results
