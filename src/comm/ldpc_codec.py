@@ -98,6 +98,28 @@ class SystematicLDPC:
     def is_codeword(self, code_bits: np.ndarray) -> bool:
         return bool(np.all(self.syndrome(code_bits) == 0))
 
+    def metadata(self) -> dict:
+        """
+        Return coding metadata for reports and CSV outputs.
+
+        This code is LDPC-like because it uses a sparse parity-check
+        construction and iterative hard-decision bit flipping. It is not
+        a standard LDPC BP/min-sum decoder with soft LLR inputs.
+        """
+        return {
+            "coding_family": "ldpc_like_sparse_systematic",
+            "decoder_type": "hard_bit_flipping",
+            "soft_llr_decoder": False,
+            "standard_ldpc_bp": False,
+            "k": self.k,
+            "m": self.m,
+            "n": self.n,
+            "nominal_code_rate": self.k / self.n,
+            "col_weight": int(self.cfg.col_weight),
+            "max_iter": int(self.cfg.max_iter),
+            "seed": int(self.cfg.seed),
+        }
+        
     def decode_block_bitflip(self, rx_bits: np.ndarray) -> Tuple[np.ndarray, bool, int]:
         """
         Hard-decision bit-flipping decoder.

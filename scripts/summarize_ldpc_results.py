@@ -301,7 +301,9 @@ def main():
 
     print(f"Loaded rows: {len(rows)} from {path}")
     print("Primary metric: *_validated answerability after invalid-packet drop.")
-
+    
+    print("Coding note: `ldpc_like` denotes sparse systematic block coding with hard-decision bit-flipping; it is not standard LDPC BP/min-sum with soft LLR.")
+    
     summarize_sg_ldpc_gain(rows)
     summarize_bbox_ldpc_gain(rows)
     summarize_rayleigh_best(rows)
