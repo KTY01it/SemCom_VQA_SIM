@@ -1,4 +1,5 @@
 import csv
+import random
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -6,6 +7,11 @@ from src.comm.bpsk import bpsk_demodulate_hard, bpsk_modulate
 from src.comm.channel import awgn_channel, rayleigh_channel
 from src.comm.latency import communication_latency_sec
 from src.data.gqa_subset import GQACommSubset
+from src.eval.evidence_metrics import (
+    coverage_ratio,
+    redundancy_ratio,
+    unique_concept_count,
+)
 from src.eval.metrics import bit_error_rate, packet_error_rate
 from src.eval.proxy_metrics import (
     answer_hit_bboxes,
@@ -20,6 +26,7 @@ from src.eval.semantic_metrics import (
     sg_field_accuracy,
     sg_triplet_exact_match_rate,
 )
+from src.methods.dbss import dbss_select_triplets
 from src.semantic.packet_codec import (
     BBoxPacket,
     SGTripletPacket,
@@ -71,6 +78,10 @@ def select_bboxes(
     keywords: List[str],
     object_freq,
 ) -> List[Dict[str, Any]]:
+    if method == "random":
+        out = list(bboxes)
+        random.shuffle(out)
+        return out    
     if method == "original":
         return rank_bboxes_original(bboxes)
     if method == "do":
@@ -87,14 +98,97 @@ def select_triplets(
     keywords: List[str],
     object_freq,
     relation_freq,
+    question: str = "",
+    n_top: int = 9,
+    snr_db: float = 8.0,
+    channel_type: str = "awgn",
+    seed: int = 0,
 ) -> List[Dict[str, Any]]:
+    if method == "random":
+        out = list(triplets)
+        random.seed(seed)
+        random.shuffle(out)
+        return out
+
     if method == "original":
         return rank_triplets_original(triplets)
+
     if method == "do":
         return rank_triplets_do(triplets, object_freq, relation_freq)
+
     if method == "go":
         return rank_triplets_go(triplets, keywords, object_freq, relation_freq)
 
+    if method == "dbss":
+        return dbss_select_triplets(
+            triplets=triplets,
+            question=question,
+            keywords=keywords,
+            n_top=n_top,
+            snr_db=snr_db,
+            channel_type=channel_type,
+        )
+
+    if method == "dbss_no_coverage":
+        return dbss_select_triplets(
+            triplets=triplets,
+            question=question,
+            keywords=keywords,
+            n_top=n_top,
+            snr_db=snr_db,
+            channel_type=channel_type,
+            alpha=1.0,
+            beta=0.0,
+            gamma=0.25,
+            lamb=0.75,
+            mu=0.05,
+        )
+
+    if method == "dbss_no_redundancy":
+        return dbss_select_triplets(
+            triplets=triplets,
+            question=question,
+            keywords=keywords,
+            n_top=n_top,
+            snr_db=snr_db,
+            channel_type=channel_type,
+            alpha=1.0,
+            beta=1.0,
+            gamma=0.25,
+            lamb=0.0,
+            mu=0.05,
+        )
+
+    if method == "dbss_no_channel":
+        return dbss_select_triplets(
+            triplets=triplets,
+            question=question,
+            keywords=keywords,
+            n_top=n_top,
+            snr_db=snr_db,
+            channel_type=channel_type,
+            alpha=1.0,
+            beta=1.0,
+            gamma=0.0,
+            lamb=0.75,
+            mu=0.05,
+        )
+
+    if method == "dbss_no_cost":
+        return dbss_select_triplets(
+            triplets=triplets,
+            question=question,
+            keywords=keywords,
+            n_top=n_top,
+            snr_db=snr_db,
+            channel_type=channel_type,
+            alpha=1.0,
+            beta=1.0,
+            gamma=0.25,
+            lamb=0.75,
+            mu=0.0,
+        )
+        
     raise ValueError(f"Unknown sg ranking method: {method}")
 
 
@@ -121,20 +215,39 @@ def run_sg_ranking(
     delivered_answer_hit_list = []
     latency_list = []
     bit_list = []
+    coverage_list = []
+    redundancy_list = []
+    unique_concept_list = []
 
     for sample_idx, row in enumerate(sg_rows):
         qid = row["question_id"]
         sample = sample_by_qid[qid]
-
+        
+        random.seed(seed + sample_idx)
         ranked = select_triplets(
             triplets=row["triplets"],
             method=method,
             keywords=sample["keywords"],
             object_freq=object_freq,
             relation_freq=relation_freq,
+            question=sample.get("question", ""),
+            n_top=n_top,
+            snr_db=snr_db,
+            channel_type=channel_type,
+            seed=seed + sample_idx,
         )
 
         selected = ranked[:n_top]
+
+        coverage_list.append(
+            coverage_ratio(
+                selected_units=selected,
+                question=sample.get("question", ""),
+                keywords=sample.get("keywords", []),
+            )
+        )
+        redundancy_list.append(redundancy_ratio(selected))
+        unique_concept_list.append(unique_concept_count(selected))
 
         if not selected:
             continue
@@ -210,6 +323,9 @@ def run_sg_ranking(
         "proxy_answer_hit_rate": sum(answer_hit_list) / len(answer_hit_list),
         "delivered_keyword_hit_rate": sum(delivered_keyword_hit_list) / len(delivered_keyword_hit_list),
         "delivered_answer_hit_rate": sum(delivered_answer_hit_list) / len(delivered_answer_hit_list),
+        "coverage_ratio": sum(coverage_list) / len(coverage_list),
+        "redundancy_ratio": sum(redundancy_list) / len(redundancy_list),
+        "unique_concept_count": sum(unique_concept_list) / len(unique_concept_list),
         "t_com_sec": sum(latency_list) / len(latency_list),
     }
 
@@ -241,7 +357,8 @@ def run_bbox_ranking(
     for sample_idx, row in enumerate(bbox_rows):
         qid = row["question_id"]
         sample = sample_by_qid[qid]
-
+        
+        random.seed(seed + sample_idx)
         ranked = select_bboxes(
             bboxes=row["bboxes"],
             method=method,

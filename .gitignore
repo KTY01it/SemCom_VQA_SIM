@@ -63,3 +63,33 @@ GQA/
 *.h5
 *.hdf5
 *.mat
+
+# Generated figures / reports
+figures/
+plots/
+reports/
+*.png
+*.jpg
+*.jpeg
+*.pdf
+*.svg
+
+# Generated tables / raw benchmark exports
+*.csv
+*.tsv
+*.jsonl
+
+# Temporary / backup files
+*.tmp
+*.bak
+*.orig
+
+# Python build artifacts
+build/
+dist/
+*.egg-info/
+
+# Local config overrides
+*.local.yaml
+*.local.yml
+.env.*

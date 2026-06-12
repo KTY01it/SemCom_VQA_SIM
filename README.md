@@ -26,6 +26,19 @@ Implemented:
 * SG triplet semantic packet codec
 * BBox semantic packet codec
 * Original / DO / GO semantic ranking baselines
+* Random semantic selection baseline
+* DBSS: Diverse Budgeted Semantic Selection for SG triplets
+* DBSS ablation variants:
+  * DBSS without coverage gain
+  * DBSS without redundancy penalty
+  * DBSS without channel reliability term
+  * DBSS without cost penalty
+* Evidence-quality metrics:
+  * question concept coverage
+  * semantic redundancy ratio
+  * unique concept count
+* Uncoded DBSS benchmark runner
+* LDPC-coded DBSS benchmark runner
 * Packet-level CRC16 wrapper and CRC-fail drop policy
 * Actual object/relation vocab ID-set validation
 * BPSK modulation and hard-decision demodulation
@@ -95,6 +108,46 @@ hard-decision bit-flipping decoder
 
 It is not standard LDPC BP/min-sum decoding with soft LLR.
 
+### DBSS: Diverse Budgeted Semantic Selection
+
+This repository includes a proposed semantic selection method:
+
+```text
+DBSS: Diverse Budgeted Semantic Selection
+```
+
+DBSS is designed for SG-based goal-oriented semantic communication. Instead of ranking each scene-graph triplet independently and transmitting the top-`K` triplets, DBSS performs set-level semantic evidence selection.
+
+The selected triplets are optimized to be:
+
+* relevant to the question,
+* useful for covering question-related concepts,
+* less redundant with already selected triplets,
+* diverse in semantic content,
+* compatible with the semantic transmission budget.
+
+Conceptually, DBSS changes the semantic transmission strategy from:
+
+```text
+independent top-K semantic ranking
+```
+
+to:
+
+```text
+budgeted diverse semantic evidence selection
+```
+
+The current DBSS implementation is an AI-inspired combinatorial optimization method based on diverse subset selection and greedy marginal-gain selection. It is not a deep neural network model.
+
+The main DBSS setting in this repository is:
+
+```text
+DBSS-SG
+```
+
+BBox-based DBSS is not the main setting because the current contribution focuses on structured SG triplet selection for visual reasoning.
+
 ### Channel metadata and LLR-ready statistics
 
 The environment exposes channel metadata and LLR-ready statistics for future soft-decoding or channel-aware semantic selection methods.
@@ -109,6 +162,10 @@ Current reported decoding remains hard-decision unless a soft decoder is explici
 * The total latency model uses paper-style FLOPs approximation, not measured runtime profiling.
 * The Rayleigh model is flat Rayleigh fading with perfect-CSI equalization.
 * Dataset files and generated result files are not included by default in this repository.
+* DBSS is currently implemented mainly for SG triplets.
+* DBSS is a greedy set-level selection method, not a trained neural selector.
+* The current DBSS channel/cost terms have limited influence for fixed-length SG packets; the main observed gain comes from redundancy-aware diverse evidence selection.
+* Reported DBSS gains are based on validated proxy answerability, not full VQA model accuracy.
 
 ## Expected data path
 
@@ -213,61 +270,137 @@ Figures are generated under:
 results/figures/
 ```
 
+## Run DBSS benchmarks
+
+Uncoded SNR benchmark:
+
+```bash
+PYTHONPATH=. python scripts/run_benchmark_snr.py \
+  --semantic-type sg \
+  --methods random original do go dbss \
+  --channels awgn rayleigh \
+  --n-top 9 \
+  --num-samples 500 \
+  --out results/benchmark/main_snr_sg_dbss.csv
+```
+LDPC-coded SNR benchmark::
+```bash
+PYTHONPATH=. python scripts/run_benchmark_ldpc_snr.py \
+  --methods random original do go dbss \
+  --channels awgn rayleigh \
+  --snrs -4 -2 0 2 4 6 8 10 12 14 16 \
+  --n-top 9 \
+  --num-samples 500 \
+  --out results/benchmark_ldpc/main_snr_sg_ldpc_dbss.csv
+```
+
+LDPC-coded Ntop benchmark:
+```bash
+PYTHONPATH=. python scripts/run_benchmark_ldpc_ntop.py \
+  --methods random original do go dbss \
+  --channels awgn rayleigh \
+  --snr-db 8 \
+  --num-samples 500 \
+  --out results/benchmark_ldpc/main_ntop_sg_ldpc_dbss.csv
+```
+
+DBSS ablation:
+```bash
+PYTHONPATH=. python scripts/run_benchmark_ntop.py \
+  --semantic-type sg \
+  --methods go dbss dbss_no_coverage dbss_no_redundancy dbss_no_channel dbss_no_cost \
+  --channels rayleigh \
+  --snr-db 8 \
+  --n-tops 3 6 9 12 15 18 21 24 27 30 \
+  --num-samples 500 \
+  --out results/ablation/dbss_ablation_ntop_rayleigh8.csv
+```
+
+
 ## Main outputs
 
-Expected result files include:
+## Main generated outputs
+
+Generated benchmark outputs are written under:
 
 ```text
-results/sg_packet_sanity.csv
-results/bbox_packet_sanity.csv
-results/answerability_sweep.csv
-results/answerability_sweep_ldpc.csv
-results/image_baseline.csv
-results/latency_breakdown.csv
-results/summary_tables.txt
-results/summary_ldpc_tables.txt
-results/proxy_metric_contract.json
-results/experiment_summary.md
+results/
 ```
 
-Expected figure files include:
+This directory is intentionally ignored by Git and should not be committed.
+
+Important generated result groups include:
 
 ```text
-results/figures/fig1_sg_answerability_no_ldpc_awgn.png
-results/figures/fig1_sg_answerability_no_ldpc_rayleigh.png
-results/figures/fig2_bbox_answerability_no_ldpc_awgn.png
-results/figures/fig2_bbox_answerability_no_ldpc_rayleigh.png
-results/figures/fig3_channel_damage_go_sg_awgn.png
-results/figures/fig3_channel_damage_go_sg_rayleigh.png
-results/figures/fig3_channel_damage_go_bbox_awgn.png
-results/figures/fig3_channel_damage_go_bbox_rayleigh.png
-results/figures/fig4_latency_answerability_no_ldpc_awgn.png
-results/figures/fig4_latency_answerability_no_ldpc_rayleigh.png
-results/figures/fig5_ldpc_gain_go_sg_rayleigh_ntop3.png
-results/figures/fig5_ldpc_gain_go_sg_rayleigh_ntop6.png
-results/figures/fig5_ldpc_gain_go_sg_rayleigh_ntop9.png
-results/figures/fig5_ldpc_gain_go_sg_rayleigh_ntop12.png
-results/figures/fig5_ldpc_gain_go_bbox_rayleigh_ntop3.png
-results/figures/fig5_ldpc_gain_go_bbox_rayleigh_ntop6.png
-results/figures/fig5_ldpc_gain_go_bbox_rayleigh_ntop9.png
-results/figures/fig5_ldpc_gain_go_bbox_rayleigh_ntop12.png
-results/figures/fig6_ldpc_latency_tradeoff_go_sg_rayleigh_8db.png
-results/figures/fig6_ldpc_latency_tradeoff_go_sg_rayleigh_10db.png
-results/figures/fig6_ldpc_latency_tradeoff_go_sg_rayleigh_12db.png
-results/figures/fig6_ldpc_latency_tradeoff_go_bbox_rayleigh_8db.png
-results/figures/fig6_ldpc_latency_tradeoff_go_bbox_rayleigh_10db.png
-results/figures/fig6_ldpc_latency_tradeoff_go_bbox_rayleigh_12db.png
-results/figures/fig7_decoded_ber_go_sg_rayleigh_ntop12.png
-results/figures/fig7_per_go_sg_rayleigh_ntop12.png
-results/figures/fig8_image_vs_semantic_latency_awgn.png
-results/figures/fig8_image_vs_semantic_latency_rayleigh.png
-results/figures/fig9_image_to_semantic_latency_ratio_awgn.png
-results/figures/fig9_image_to_semantic_latency_ratio_rayleigh.png
-results/figures/fig10_total_latency_image_vs_semantic_awgn.png
-results/figures/fig10_total_latency_image_vs_semantic_rayleigh.png
-results/figures/fig11_total_latency_ratio_awgn.png
-results/figures/fig11_total_latency_ratio_rayleigh.png
+results/benchmark/
+results/benchmark_ldpc/
+results/ablation/
+results/figures/
+results/tables/
 ```
+
+The most important benchmark files generated locally are:
+
+```text
+results/benchmark/main_snr_sg_dbss.csv
+results/benchmark/main_ntop_sg_dbss_metrics.csv
+results/benchmark_ldpc/main_snr_sg_ldpc_dbss.csv
+results/benchmark_ldpc/main_ntop_sg_ldpc_dbss.csv
+results/ablation/dbss_ablation_ntop_rayleigh8.csv
+results/ablation/dbss_ablation_ntop_awgn8.csv
+```
+
+Only summarized results should be reported in this README or in paper tables. Raw benchmark CSV files and generated figures are not tracked by Git.
+
+
+## DBSS benchmark summary
+
+The main benchmark compares SG-based semantic selection methods:
+
+| Method      | Description                                  | Role                            |
+| ----------- | -------------------------------------------- | ------------------------------- |
+| Random-SG   | Randomly selects SG triplets                 | Lower-bound semantic baseline   |
+| Original-SG | Uses the original SG triplet order           | No-ranking baseline             |
+| DO-SG       | Data-oriented frequency-based ranking        | Data-oriented semantic baseline |
+| GO-SG       | Goal-oriented SG ranking                     | Core baseline                   |
+| DBSS-SG     | Diverse budgeted semantic evidence selection | Proposed method                 |
+
+### Uncoded benchmark
+
+The uncoded benchmark evaluates semantic packets transmitted with BPSK over AWGN and Rayleigh channels.
+
+| Setting                           | Result summary                            |
+| --------------------------------- | ----------------------------------------- |
+| AWGN SNR sweep                    | DBSS outperforms GO-SG in 9/11 SNR points |
+| Rayleigh SNR sweep                | DBSS outperforms GO-SG in 7/11 SNR points |
+| Average gain over GO-SG, AWGN     | +0.022955 delivered answer hit rate       |
+| Average gain over GO-SG, Rayleigh | +0.010202 delivered answer hit rate       |
+
+### LDPC-coded benchmark
+
+The LDPC-coded benchmark uses the repository's LDPC-like sparse systematic block code with hard-decision bit-flipping decoding.
+
+| Setting                                           | Result summary                              |
+| ------------------------------------------------- | ------------------------------------------- |
+| LDPC AWGN SNR sweep                               | DBSS outperforms GO-SG in 9/11 SNR points   |
+| LDPC Rayleigh SNR sweep                           | DBSS outperforms GO-SG in 8/11 SNR points   |
+| LDPC AWGN Ntop sweep                              | DBSS outperforms GO-SG in 10/10 Ntop points |
+| LDPC Rayleigh Ntop sweep                          | DBSS outperforms GO-SG in 10/10 Ntop points |
+| Average LDPC gain over GO-SG, AWGN Ntop sweep     | +0.026453 delivered answer hit rate         |
+| Average LDPC gain over GO-SG, Rayleigh Ntop sweep | +0.033667 delivered answer hit rate         |
+
+### Evidence quality analysis
+
+In the Rayleigh SNR = 8 setting, DBSS improves semantic evidence quality compared with GO-SG.
+
+| Method              | Mean delivered answer hit rate | Coverage ratio | Redundancy ratio | Unique concept count |
+| ------------------- | -----------------------------: | -------------: | ---------------: | -------------------: |
+| GO-SG               |                         0.1471 |         0.5460 |           0.4329 |                14.29 |
+| DBSS w/o redundancy |                         0.1589 |         0.5509 |           0.4260 |                15.23 |
+| DBSS                |                         0.1705 |         0.5590 |           0.2983 |                18.53 |
+
+These results indicate that the main improvement of DBSS comes from redundancy-aware diverse evidence selection. DBSS selects a less redundant and more diverse set of SG triplets than GO-SG under the same semantic budget.
+
 
 ## Validation and tests
 
@@ -299,6 +432,9 @@ PYTHONPATH=. python scripts/check_environment_outputs.py
 
 This environment is suitable for developing new methods in:
 
+* diverse semantic evidence selection
+* submodular-style semantic subset selection
+* redundancy-aware semantic packet selection
 * channel-aware semantic packet selection
 * reliability-aware semantic ranking
 * adaptive semantic budget / adaptive `Ntop`
