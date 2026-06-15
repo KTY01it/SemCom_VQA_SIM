@@ -9,7 +9,11 @@ from src.eval.partial_proxy_metrics import (
     partial_field_keep_ratio,
 )
 from src.methods.dbss import dbss_select_triplets
-from src.methods.qtc_rule import qtc_rule_keep_mask, tx_field_keep_ratio
+from src.methods.qtc_rule import (
+    qtc_rule_keep_mask,
+    qtc_rule_keep_mask_noanswer,
+    tx_field_keep_ratio,
+)
 from src.semantic.compressed_sg_codec import (
     decode_compressed_sg_triplets,
     encode_compressed_sg_triplets,
@@ -27,6 +31,7 @@ def parse_args():
     parser.add_argument("--snr-db", type=float, default=8.0)
     parser.add_argument("--channel", default="awgn", choices=["awgn", "rayleigh"])
     parser.add_argument("--out", default="")
+    parser.add_argument("--no-answer", action="store_true")
     return parser.parse_args()
 
 
@@ -77,12 +82,20 @@ def main():
 
         keep_masks = []
         for t in selected:
-            keep = qtc_rule_keep_mask(
-                triplet=t,
-                question=sample.get("question", ""),
-                keywords=sample.get("keywords", []),
-                answer=sample.get("answer", ""),
-                question_type=sample.get("question_type", ""),
+            if args.no_answer:
+                keep = qtc_rule_keep_mask_noanswer(
+                    triplet=t,
+                    question=sample.get("question", ""),
+                    keywords=sample.get("keywords", []),
+                    question_type=sample.get("question_type", ""),
+                )
+            else:
+                keep = qtc_rule_keep_mask(
+                    triplet=t,
+                    question=sample.get("question", ""),
+                    keywords=sample.get("keywords", []),
+                    answer=sample.get("answer", ""),
+                    question_type=sample.get("question_type", ""),
             )
             keep_masks.append(keep)
 
@@ -133,6 +146,7 @@ def main():
         "rx_field_keep_ratio": sum(rx_keep_ratio_list) / len(rx_keep_ratio_list),
         "answer_per_kbit": delivered_answer / max(1e-12, avg_bits / 1000.0),
         "start_index": args.start_index,
+        "uses_answer": not args.no_answer,
     }
 
     print(row)

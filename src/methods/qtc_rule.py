@@ -52,3 +52,28 @@ def tx_field_keep_ratio(keep_masks: List[Dict[str, bool]]) -> float:
         kept += int(bool(m["object"]))
 
     return kept / max(1, total)
+
+def qtc_rule_keep_mask_noanswer(
+    triplet,
+    question,
+    keywords,
+    question_type=None,
+):
+    labels = infer_keep_label(
+        triplet=triplet,
+        question=question,
+        keywords=keywords,
+        answer=None,
+        question_type=question_type,
+    )
+
+    keep = {
+        "subject": bool(labels["subject"]),
+        "relation": bool(labels["relation"]),
+        "object": bool(labels["object"]),
+    }
+
+    if not any(keep.values()):
+        keep["object"] = True
+
+    return keep
