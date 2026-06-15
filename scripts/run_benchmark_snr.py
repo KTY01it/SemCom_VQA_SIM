@@ -41,6 +41,7 @@ def parse_args():
     parser.add_argument("--num-samples", type=int, default=500)
     parser.add_argument("--out", type=str, default="results/benchmark/baseline_snr.csv")
     parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--start-index", type=int, default=0)
     return parser.parse_args()
 
 
@@ -55,7 +56,11 @@ def main():
 
     ds = GQACommSubset(Path(cfg["data"]["root"]))
 
-    samples = ds.load_samples(limit=args.num_samples)
+    all_samples = ds.load_samples()
+    start = args.start_index
+    end = start + args.num_samples
+
+    samples = all_samples[start:end]
     sample_by_qid = {s["question_id"]: s for s in samples}
 
     all_samples_for_freq = ds.load_samples()
@@ -65,7 +70,8 @@ def main():
     out_rows = []
 
     if args.semantic_type in ["sg", "both"]:
-        sg_rows = ds.load_sg_triplets(limit=args.num_samples)
+        all_sg_rows = ds.load_sg_triplets()
+        sg_rows = all_sg_rows[start:end]
 
     if args.semantic_type in ["bbox", "both"]:
         bbox_rows = ds.load_bbox_packets(limit=args.num_samples)
