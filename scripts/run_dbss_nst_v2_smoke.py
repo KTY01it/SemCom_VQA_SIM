@@ -33,6 +33,7 @@ def parse_args():
     parser.add_argument("--threshold", type=float, default=0.90)
     parser.add_argument("--model", default="results/nst/nst_v2_model.pt")
     parser.add_argument("--out", default="")
+    parser.add_argument("--method-name", default="dbss_nst_v2")
     return parser.parse_args()
 
 
@@ -131,7 +132,7 @@ def main():
     delivered_answer = sum(answer_list) / len(answer_list)
 
     row = {
-        "method": "dbss_nst_v2",
+        "method": args.method_name,
         "model": args.model,
         "semantic_type": "sg",
         "channel": args.channel,
