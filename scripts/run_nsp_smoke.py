@@ -31,8 +31,63 @@ def parse_args():
     parser.add_argument("--mask-threshold", type=float, default=0.40)
     parser.add_argument("--model", default="results/nsp/nsp_model.pt")
     parser.add_argument("--out", default="")
+    parser.add_argument("--selection-mode", default="topk", choices=["topk", "mmr"])
+    parser.add_argument("--diversity-beta", type=float, default=0.0)
     return parser.parse_args()
 
+def concept_set(triplet):
+    out = set()
+
+    for k in ["subject_id", "relation_id", "object_id"]:
+        if k in triplet:
+            out.add(f"{k}:{triplet[k]}")
+
+    for k in ["subject", "relation", "object"]:
+        if k in triplet:
+            out.add(f"{k}:{str(triplet[k]).lower().strip()}")
+
+    return out
+
+
+def redundancy(a, b):
+    ca = concept_set(a)
+    cb = concept_set(b)
+
+    if not ca or not cb:
+        return 0.0
+
+    return len(ca & cb) / max(1, min(len(ca), len(cb)))
+
+
+def mmr_select(scored, n_top, beta):
+    """
+    scored: list of (select_prob, triplet, keep_mask)
+    """
+    remaining = list(scored)
+    selected = []
+
+    while remaining and len(selected) < n_top:
+        best_idx = 0
+        best_score = -1e18
+
+        for i, (prob, triplet, keep) in enumerate(remaining):
+            if not selected:
+                red = 0.0
+            else:
+                red = max(
+                    redundancy(triplet, chosen_triplet)
+                    for _, chosen_triplet, _ in selected
+                )
+
+            score = float(prob) - float(beta) * float(red)
+
+            if score > best_score:
+                best_score = score
+                best_idx = i
+
+        selected.append(remaining.pop(best_idx))
+
+    return selected
 
 def main():
     args = parse_args()
@@ -89,7 +144,15 @@ def main():
             scored.append((select_prob, t, keep))
 
         scored = sorted(scored, key=lambda x: x[0], reverse=True)
-        chosen = scored[: args.n_top]
+
+        if args.selection_mode == "mmr":
+            chosen = mmr_select(
+                scored=scored,
+                n_top=args.n_top,
+                beta=args.diversity_beta,
+            )
+        else:
+            chosen = scored[: args.n_top]
 
         selected = [x[1] for x in chosen]
         keep_masks = [x[2] for x in chosen]
@@ -147,6 +210,8 @@ def main():
         "answer_per_kbit": delivered_answer / max(1e-12, avg_bits / 1000.0),
         "mask_threshold": args.mask_threshold,
         "start_index": args.start_index,
+        "selection_mode": args.selection_mode,
+        "diversity_beta": args.diversity_beta,
     }
 
     print(row)
