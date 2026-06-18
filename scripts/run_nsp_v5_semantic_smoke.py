@@ -19,6 +19,9 @@ from src.methods.nsp_v5_semantic_features import (
     build_v5_dense_features,
     cosine_scalar,
     triplet_text,
+    slot_aware_features,
+    noanswer_proxy_score,
+    question_triplet_jaccard,
 )
 from src.methods.qtc_rule import tx_field_keep_ratio
 from src.semantic.compressed_sg_codec import (
@@ -62,6 +65,105 @@ def semantic_mmr_select(scores, trip_embs, n_top, beta):
 
     return selected
 
+def zscore_list(xs):
+    if not xs:
+        return xs
+
+    import math
+
+    mean = sum(xs) / len(xs)
+    var = sum((x - mean) ** 2 for x in xs) / max(1, len(xs))
+    std = math.sqrt(var) + 1e-6
+
+    return [(x - mean) / std for x in xs]
+
+
+def build_augmented_scores(
+    raw_scores,
+    semantic_cosines,
+    triplets,
+    question,
+    keywords,
+    question_type,
+    gamma_slot,
+    gamma_proxy,
+    gamma_semantic,
+    gamma_jaccard,
+):
+    """
+    Inference-safe score augmentation.
+    Does not use answer.
+    """
+    neural_z = zscore_list([float(x) for x in raw_scores])
+    sem_z = zscore_list([float(x) for x in semantic_cosines])
+
+    proxy_scores = []
+    jaccard_scores = []
+    slot_scores = []
+
+    for t in triplets:
+        slot = slot_aware_features(
+            triplet=t,
+            question=question,
+            keywords=keywords,
+            question_type=question_type,
+        )
+
+        subject_as_answer_slot = slot[3]
+        object_as_answer_slot = slot[4]
+        relation_as_answer_slot = slot[5]
+        relation_bridge = slot[6]
+        spatial_match = slot[9]
+
+        # Evidence-density proxy:
+        # - answer-slot side is important
+        # - relation bridge/spatial match improves VQA evidence quality
+        slot_score = (
+            1.0 * max(subject_as_answer_slot, object_as_answer_slot)
+            + 0.5 * relation_as_answer_slot
+            + 0.4 * relation_bridge
+            + 0.4 * spatial_match
+        )
+
+        slot_scores.append(float(slot_score))
+
+        proxy_scores.append(
+            float(
+                noanswer_proxy_score(
+                    triplet=t,
+                    question=question,
+                    keywords=keywords,
+                    question_type=question_type,
+                )
+                / 4.0
+            )
+        )
+
+        jaccard_scores.append(
+            float(
+                question_triplet_jaccard(
+                    triplet=t,
+                    question=question,
+                    keywords=keywords,
+                )
+            )
+        )
+
+    proxy_z = zscore_list(proxy_scores)
+    jaccard_z = zscore_list(jaccard_scores)
+
+    out = []
+    for i in range(len(raw_scores)):
+        s = (
+            neural_z[i]
+            + gamma_slot * slot_scores[i]
+            + gamma_proxy * proxy_z[i]
+            + gamma_semantic * sem_z[i]
+            + gamma_jaccard * jaccard_z[i]
+        )
+        out.append(float(s))
+
+    return out
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -76,6 +178,11 @@ def parse_args():
     parser.add_argument("--selection-mode", default="topk", choices=["topk", "mmr"])
     parser.add_argument("--semantic-mmr-beta", type=float, default=0.30)
     parser.add_argument("--model", default="results/nsp/nsp_v5_semantic.pt")
+    parser.add_argument("--score-augment", action="store_true")
+    parser.add_argument("--gamma-slot", type=float, default=0.0)
+    parser.add_argument("--gamma-proxy", type=float, default=0.0)
+    parser.add_argument("--gamma-semantic", type=float, default=0.0)
+    parser.add_argument("--gamma-jaccard", type=float, default=0.0)    
     parser.add_argument("--out", default="")
     return parser.parse_args()
 
@@ -175,6 +282,24 @@ def main():
             scores = scores.cpu().tolist()
             mask_probs = torch.sigmoid(mask_logits).cpu()
 
+        semantic_cosines = []
+        for i in range(len(triplets)):
+            semantic_cosines.append(cosine_scalar(q_emb, t_embs[i]))
+
+        if args.score_augment:
+            scores = build_augmented_scores(
+                raw_scores=scores,
+                semantic_cosines=semantic_cosines,
+                triplets=triplets,
+                question=sample.get("question", ""),
+                keywords=sample.get("keywords", []),
+                question_type=sample.get("question_type", ""),
+                gamma_slot=args.gamma_slot,
+                gamma_proxy=args.gamma_proxy,
+                gamma_semantic=args.gamma_semantic,
+                gamma_jaccard=args.gamma_jaccard,
+            )
+
         if args.selection_mode == "mmr":
             selected_indices = semantic_mmr_select(
                 scores=scores,
@@ -254,6 +379,11 @@ def main():
         "selection_mode": args.selection_mode,
         "semantic_mmr_beta": args.semantic_mmr_beta,
         "start_index": args.start_index,
+        "score_augment": args.score_augment,
+        "gamma_slot": args.gamma_slot,
+        "gamma_proxy": args.gamma_proxy,
+        "gamma_semantic": args.gamma_semantic,
+        "gamma_jaccard": args.gamma_jaccard,
     }
 
     print(out_row)
