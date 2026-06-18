@@ -18,10 +18,11 @@ from src.methods.neural_semantic_reranker import (
 from src.methods.nsp_v5_semantic_features import (
     build_v5_dense_features,
     cosine_scalar,
+    has_answer_overlap,
+    nsp_v5_dense_feature_names,
+    oracle_utility_score,
+    softmax_teacher_probs,
     triplet_text,
-    slot_aware_features,
-    noanswer_proxy_score,
-    question_triplet_jaccard,
 )
 from src.methods.qtc_rule import tx_field_keep_ratio
 from src.semantic.compressed_sg_codec import (
