@@ -96,7 +96,7 @@ def main():
         samples_with_answer_candidate += 1
 
         # DBSS selection recall.
-        dbss_selected = dbss_select_triplets(
+        dbss_ranked = dbss_select_triplets(
             triplets=triplets,
             question=sample.get("question", ""),
             keywords=sample.get("keywords", []),
@@ -104,6 +104,8 @@ def main():
             snr_db=args.snr_db,
             channel_type=args.channel,
         )
+
+        dbss_selected = dbss_ranked[: args.n_top]
 
         dbss_hit = any(has_answer_overlap(t, answer) for t in dbss_selected)
         if dbss_hit:
