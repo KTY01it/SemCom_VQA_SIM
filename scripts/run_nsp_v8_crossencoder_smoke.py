@@ -62,7 +62,7 @@ def budgeted_masks(prob_lists, target_bits, n_top):
 
 
 def parse_args():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(allow_abbrev=False)
     parser.add_argument("--method-name", default="nsp_v8_crossencoder")
     parser.add_argument("--start-index", type=int, default=8000)
     parser.add_argument("--num-samples", type=int, default=100)

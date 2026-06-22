@@ -10,7 +10,7 @@ from scripts.run_ranking_sweep import run_sg_ranking, run_bbox_ranking
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(
+    parser = argparse.ArgumentParser(allow_abbrev=False,
         description="Run SNR benchmark for semantic ranking methods."
     )
 

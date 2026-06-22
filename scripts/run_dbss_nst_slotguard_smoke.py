@@ -30,7 +30,7 @@ from scripts.run_ranking_sweep import transmit_bits
 
 
 def parse_args():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(allow_abbrev=False)
     parser.add_argument("--method-name", default="dbss_nst_v4_slotguard")
     parser.add_argument("--start-index", type=int, default=8000)
     parser.add_argument("--num-samples", type=int, default=100)
